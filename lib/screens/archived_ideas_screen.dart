@@ -1,106 +1,52 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
+import '../models/idea_model.dart';
+import '../services/app_preferences.dart';
+import '../services/firestore_service.dart';
 import '../widgets/app_background.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/rm_chip.dart';
 
-class _ArchivedIdea {
-  final String title;
-  final String description;
-  final String postedDate;
-  final String type;
+class ArchivedIdeasScreen extends StatefulWidget {
+  const ArchivedIdeasScreen({super.key});
 
-  const _ArchivedIdea({
-    required this.title,
-    required this.description,
-    required this.postedDate,
-    required this.type,
-  });
+  @override
+  State<ArchivedIdeasScreen> createState() => _ArchivedIdeasScreenState();
 }
 
-const _kArchivedIdeas = [
-  _ArchivedIdea(
-    title: 'Three Best Backpacks to Store Camera Equipment',
-    description:
-        'Hook built from caption patterns and creator references. Six bullets filmed as a talking-head reel. Performed well with gear-focused audience.',
-    postedDate: 'Posted Mar 18',
-    type: 'AI Assisted',
-  ),
-  _ArchivedIdea(
-    title: '5 Editing Shortcuts That Save Me Hours Every Week',
-    description:
-        'Tutorial-style reel covering Premiere Pro workflow. Strong retention rate, high save signal from editor community.',
-    postedDate: 'Posted Mar 12',
-    type: 'Manual',
-  ),
-  _ArchivedIdea(
-    title: 'How I Plan a Month of Content in One Afternoon',
-    description:
-        'Batching workflow walkthrough. Generated from imported creator reference cluster. Resonated strongly with aspiring full-time creators.',
-    postedDate: 'Posted Mar 5',
-    type: 'AI Assisted',
-  ),
-  _ArchivedIdea(
-    title: '3 Tips to Build Financial Independence as a Creator',
-    description:
-        'Captioning complete, audience signal shows strong resonance with constraint-driven financial advice.',
-    postedDate: 'Posted Feb 28',
-    type: 'Manual',
-  ),
-  _ArchivedIdea(
-    title: 'The Camera Settings I Use for Every Outdoor Shot',
-    description:
-        'Technical deep-dive on aperture, ISO, and ND filters. Pulled from saved reference reels on cinematic outdoor content.',
-    postedDate: 'Posted Feb 19',
-    type: 'AI Assisted',
-  ),
-  _ArchivedIdea(
-    title: 'Why I Stopped Using Presets (And What I Do Instead)',
-    description:
-        'Opinion-led reel on colour grading philosophy. Written manually, high comment engagement with debaters.',
-    postedDate: 'Posted Feb 10',
-    type: 'Manual',
-  ),
-  _ArchivedIdea(
-    title: 'Day in My Life: Filming 10 Reels Before Noon',
-    description:
-        'Vlog-format reel batched from a single shoot day. Creator reference hooks shaped the pacing and hook structure.',
-    postedDate: 'Posted Jan 30',
-    type: 'AI Assisted',
-  ),
-  _ArchivedIdea(
-    title: 'The Gear That Upgraded My Audio Quality Overnight',
-    description:
-        'Product-review reel on lavalier mic setup. Strong click-through to gear links, saved by audio-focused creators.',
-    postedDate: 'Posted Jan 22',
-    type: 'Manual',
-  ),
-  _ArchivedIdea(
-    title: 'Three Framing Tweaks That Instantly Elevate B-Roll',
-    description:
-        'Manual idea started from a saved note. Covers rule of thirds, leading lines, and negative space in motion.',
-    postedDate: 'Posted Jan 15',
-    type: 'Manual',
-  ),
-  _ArchivedIdea(
-    title: 'How I Grew from 0 to 10K Without Paid Ads',
-    description:
-        'Growth storytelling reel with a strong personal-brand hook. Referenced three top-performing creator caption structures.',
-    postedDate: 'Posted Jan 8',
-    type: 'AI Assisted',
-  ),
-  _ArchivedIdea(
-    title: 'My Exact Morning Routine for High-Output Creative Days',
-    description:
-        'Lifestyle reel anchored in productivity. Audience overlap with financial independence and creator workflow clusters.',
-    postedDate: 'Posted Dec 31',
-    type: 'Manual',
-  ),
-];
+class _ArchivedIdeasScreenState extends State<ArchivedIdeasScreen> {
+  String? get _uid => FirebaseAuth.instance.currentUser?.uid;
 
-class ArchivedIdeasScreen extends StatelessWidget {
-  const ArchivedIdeasScreen({super.key});
+  @override
+  void initState() {
+    super.initState();
+    // Run auto-delete if the preference is enabled
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final uid = _uid;
+      if (uid != null && AppPreferences.autoDeleteArchived.value) {
+        await FirestoreService.deleteOldArchivedIdeas(uid);
+      }
+    });
+  }
+
+  Future<void> _unarchive(IdeaModel idea) async {
+    final uid = _uid;
+    final ideaId = idea.id;
+    if (uid == null || ideaId == null) return;
+    await FirestoreService.unarchiveIdea(uid, ideaId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('"${idea.title.isEmpty ? 'Idea' : idea.title}" moved back to active.',
+            style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w600)),
+        backgroundColor: kNavy,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -110,19 +56,35 @@ class ArchivedIdeasScreen extends StatelessWidget {
         children: [
           const AppBackground(),
           SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _header(context),
-                Expanded(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(18, 8, 18, 40),
-                    itemCount: _kArchivedIdeas.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (_, i) => _ideaCard(_kArchivedIdeas[i]),
-                  ),
-                ),
-              ],
+            child: StreamBuilder<List<IdeaModel>>(
+              stream: _uid != null
+                  ? FirestoreService.archivedIdeasStream(_uid!)
+                  : const Stream.empty(),
+              builder: (context, snapshot) {
+                final ideas = snapshot.data ?? [];
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _header(context, ideas.length),
+                    Expanded(
+                      child: snapshot.connectionState ==
+                              ConnectionState.waiting
+                          ? const Center(child: CircularProgressIndicator())
+                          : ideas.isEmpty
+                              ? _emptyState()
+                              : ListView.separated(
+                                  padding: const EdgeInsets.fromLTRB(
+                                      18, 8, 18, 40),
+                                  itemCount: ideas.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 12),
+                                  itemBuilder: (_, i) =>
+                                      _ideaCard(ideas[i]),
+                                ),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ],
@@ -130,7 +92,7 @@ class ArchivedIdeasScreen extends StatelessWidget {
     );
   }
 
-  Widget _header(BuildContext context) {
+  Widget _header(BuildContext context, int count) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 12, 18, 4),
       child: GlassCard(
@@ -159,7 +121,7 @@ class ArchivedIdeasScreen extends StatelessWidget {
                 children: [
                   Text('ARCHIVED IDEAS', style: eyebrowStyle),
                   const SizedBox(height: 2),
-                  Text('Posted ideas — all time',
+                  Text('Tap the restore button to unarchive',
                       style: GoogleFonts.manrope(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
@@ -168,7 +130,7 @@ class ArchivedIdeasScreen extends StatelessWidget {
               ),
             ),
             RmChip(
-              label: '${_kArchivedIdeas.length} total',
+              label: '$count total',
               style: ChipStyle.soft,
             ),
           ],
@@ -177,7 +139,38 @@ class ArchivedIdeasScreen extends StatelessWidget {
     );
   }
 
-  Widget _ideaCard(_ArchivedIdea idea) {
+  Widget _emptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.archive_outlined,
+                size: 48, color: Color(0xFF94A3B8)),
+            const SizedBox(height: 16),
+            Text(
+              'No archived ideas yet',
+              style: GoogleFonts.fraunces(
+                  fontSize: 20, fontWeight: FontWeight.w700, color: kText),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'When you archive an idea from the workspace, it will appear here.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: kMuted,
+                  height: 1.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _ideaCard(IdeaModel idea) {
     return ContentCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -186,39 +179,67 @@ class ArchivedIdeasScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: Text(idea.title,
+                child: Text(
+                    idea.title.isEmpty ? 'Untitled idea' : idea.title,
                     style: GoogleFonts.manrope(
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
                         color: kText)),
               ),
               const SizedBox(width: 8),
-              const RmChip(label: 'Posted', style: ChipStyle.teal),
+              const RmChip(label: 'Archived', style: ChipStyle.soft),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(idea.description,
+          if (idea.script.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              idea.script.length > 120
+                  ? '${idea.script.substring(0, 120)}...'
+                  : idea.script,
               style: GoogleFonts.manrope(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                   color: kMuted,
-                  height: 1.5)),
-          const SizedBox(height: 10),
+                  height: 1.5),
+            ),
+          ],
+          const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(idea.postedDate.toUpperCase(),
+              Text(idea.timeAgoLabel.toUpperCase(),
                   style: GoogleFonts.manrope(
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 1.6,
                       color: const Color(0xFF94A3B8))),
-              Text(idea.type.toUpperCase(),
-                  style: GoogleFonts.manrope(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.6,
-                      color: const Color(0xFF94A3B8))),
+              // Unarchive button
+              GestureDetector(
+                onTap: () => _unarchive(idea),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: kNavy.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: kNavy.withValues(alpha: 0.15)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.unarchive_outlined,
+                          size: 13, color: kNavy),
+                      const SizedBox(width: 5),
+                      Text('Restore',
+                          style: GoogleFonts.manrope(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: kNavy)),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ],

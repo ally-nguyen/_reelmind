@@ -2,6 +2,311 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../app_theme.dart';
 
+// ── Prototype-style glass card ────────────────────────────────────────────────
+
+Widget glassCard({
+  required Widget child,
+  EdgeInsets padding = const EdgeInsets.all(22),
+  double radius = 32,
+}) {
+  return Container(
+    width: double.infinity,
+    padding: padding,
+    decoration: BoxDecoration(
+      color: const Color(0xDBFFFFFF),
+      borderRadius: BorderRadius.circular(radius),
+      border: Border.all(color: const Color(0x140F172A)),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x1F122033),
+          blurRadius: 45,
+          offset: Offset(0, 18),
+        ),
+      ],
+    ),
+    child: child,
+  );
+}
+
+// ── Chips ─────────────────────────────────────────────────────────────────────
+
+Widget brandChip(String label) => _chip(
+      label,
+      bgColor: const Color(0x1FFF6B57),
+      textColor: kBrandDeep,
+    );
+
+Widget softChip(String label) => _chip(
+      label,
+      bgColor: Color.fromRGBO(255, 255, 255, 0.80),
+      textColor: kMuted,
+      hasBorder: true,
+    );
+
+Widget _chip(
+  String label, {
+  required Color bgColor,
+  required Color textColor,
+  bool hasBorder = false,
+}) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: bgColor,
+      borderRadius: BorderRadius.circular(999),
+      border: hasBorder ? Border.all(color: const Color(0x140F172A)) : null,
+    ),
+    child: Text(
+      label,
+      style: GoogleFonts.manrope(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        color: textColor,
+      ),
+    ),
+  );
+}
+
+// ── Prototype-style form field ────────────────────────────────────────────────
+
+Widget protoField({
+  required String label,
+  required TextEditingController controller,
+  TextInputType keyboardType = TextInputType.text,
+  bool isPassword = false,
+  bool obscure = false,
+  VoidCallback? onToggleObscure,
+  String? hint,
+  String? Function(String?)? validator,
+}) {
+  return Container(
+    decoration: BoxDecoration(
+      color: Color.fromRGBO(255, 255, 255, 0.80),
+      borderRadius: BorderRadius.circular(22),
+    ),
+    padding: const EdgeInsets.fromLTRB(16, 12, 4, 0),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: GoogleFonts.manrope(
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.8,
+            color: const Color(0xFF94A3B8),
+          ),
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                controller: controller,
+                keyboardType: keyboardType,
+                obscureText: obscure,
+                validator: validator,
+                style: GoogleFonts.manrope(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: kText,
+                ),
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  errorBorder: InputBorder.none,
+                  focusedErrorBorder: InputBorder.none,
+                  hintText: hint,
+                  hintStyle: GoogleFonts.manrope(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFF94A3B8),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  isDense: true,
+                ),
+              ),
+            ),
+            if (isPassword && onToggleObscure != null)
+              IconButton(
+                icon: Icon(
+                  obscure
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  size: 18,
+                  color: kMuted,
+                ),
+                onPressed: onToggleObscure,
+              ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+// ── Shared survey helpers ─────────────────────────────────────────────────────
+
+Widget surveyNavRow({
+  required BuildContext context,
+  required String step,
+  required String chipLabel,
+  VoidCallback? onBack,
+}) {
+  return Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      GestureDetector(
+        onTap: onBack ?? () => Navigator.pop(context),
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: Color.fromRGBO(255, 255, 255, 0.80),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: const [
+              BoxShadow(
+                  color: Color(0x14122033),
+                  blurRadius: 8,
+                  offset: Offset(0, 2)),
+            ],
+          ),
+          child: const Icon(Icons.chevron_left_rounded,
+              color: kText, size: 22),
+        ),
+      ),
+      Column(
+        children: [
+          Text(
+            'STYLE SURVEY',
+            style: GoogleFonts.manrope(
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.8,
+              color: const Color(0xFF94A3B8),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            step,
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: kText,
+            ),
+          ),
+        ],
+      ),
+      softChip(chipLabel),
+    ],
+  );
+}
+
+Widget surveyHeroCard({
+  required String eyebrow,
+  required String title,
+  required String description,
+  double titleSize = 32,
+}) {
+  return glassCard(
+    padding: const EdgeInsets.all(22),
+    radius: 32,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          eyebrow.toUpperCase(),
+          style: GoogleFonts.manrope(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 2.4,
+            color: kBrandDeep,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          title,
+          style: GoogleFonts.fraunces(
+            fontSize: titleSize,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.04 * titleSize,
+            color: kText,
+            height: 1.02,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          description,
+          style: GoogleFonts.manrope(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: kMuted,
+            height: 1.6,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget surveyPrimaryButton({
+  required String label,
+  required IconData icon,
+  required VoidCallback? onPressed,
+  bool isLoading = false,
+}) {
+  return SizedBox(
+    width: double.infinity,
+    child: ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: kBrand,
+        foregroundColor: Colors.white,
+        disabledBackgroundColor: kBrand.withValues(alpha: 0.6),
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20)),
+        shadowColor: kBrand.withValues(alpha: 0.28),
+      ).copyWith(elevation: WidgetStateProperty.all(8)),
+      onPressed: onPressed,
+      child: isLoading
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: Colors.white),
+            )
+          : Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: GoogleFonts.manrope(
+                      fontSize: 15, fontWeight: FontWeight.w800),
+                ),
+              ],
+            ),
+    ),
+  );
+}
+
+// ── "idea item" card (used in survey creator/video lists) ─────────────────────
+
+Widget ideaItem({required Widget child}) {
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: Color.fromRGBO(255, 255, 255, 0.72),
+      borderRadius: BorderRadius.circular(22),
+      border: Border.all(color: const Color(0x0F122033)),
+    ),
+    child: child,
+  );
+}
+
 Widget authCard({required Widget child}) {
   return Container(
     width: double.infinity,
@@ -88,11 +393,11 @@ ButtonStyle authButtonStyle() {
   );
 }
 
-SnackBar authSnackBar(String message) {
+SnackBar authSnackBar(String message, {bool isError = false}) {
   return SnackBar(
     content: Text(message,
         style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w600)),
-    backgroundColor: kNavy,
+    backgroundColor: isError ? const Color(0xFFEF4444) : kNavy,
     behavior: SnackBarBehavior.floating,
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
   );

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "465090294201",
+    "project_id": "reel-mind-faa75",
+    "storage_bucket": "reel-mind-faa75.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:465090294201:android:1b5ce44958862e292fc668",
+        "android_client_info": {
+          "package_name": "com.example.reel_mind"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCkYI5_JdOEA4MXPoB2WPyhtGYEUagGP6E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

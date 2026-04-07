@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
 import '../widgets/app_background.dart';
 import '../widgets/auth_helpers.dart';
-import 'login_screen.dart' show ReelMindLogo;
+import '../services/firestore_service.dart';
+import 'survey_topics_screen.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -14,31 +16,63 @@ class SignUpScreen extends StatefulWidget {
 
 class _SignUpScreenState extends State<SignUpScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  final _confirmCtrl = TextEditingController();
   bool _obscurePassword = true;
-  bool _obscureConfirm = true;
   bool _isLoading = false;
 
   @override
   void dispose() {
+    _nameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
-    _confirmCtrl.dispose();
     super.dispose();
   }
 
   void _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      authSnackBar('Account created! Please sign in.'),
-    );
-    Navigator.pop(context);
+    try {
+      final credential =
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: _emailCtrl.text.trim(),
+        password: _passwordCtrl.text,
+      );
+      final user = credential.user!;
+      await user.updateDisplayName(_nameCtrl.text.trim());
+      await FirestoreService.createUserDoc(
+        user.uid,
+        _emailCtrl.text.trim(),
+      );
+      // Seed an empty signals document so per-step survey saves can use update()
+      await FirestoreService.saveSignals(
+        user.uid,
+        captions: [],
+        topics: [],
+        creators: [],
+        videos: [],
+      );
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const SurveyTopicsScreen()),
+        (_) => false,
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      final msg = switch (e.code) {
+        'email-already-in-use' => 'An account already exists for that email.',
+        'invalid-email' => 'Please enter a valid email address.',
+        'weak-password' => 'Password is too weak. Use at least 8 characters.',
+        'operation-not-allowed' => 'Email/password sign-up is not enabled.',
+        _ => 'Sign-up failed (${e.code}). Please try again.',
+      };
+      ScaffoldMessenger.of(context)
+          .showSnackBar(authSnackBar(msg, isError: true));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -50,128 +84,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
           const AppBackground(),
           SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.fromLTRB(18, 8, 18, 40),
               child: Form(
                 key: _formKey,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const SizedBox(height: 40),
-                    const ReelMindLogo(size: 72),
+                    _navRow(context),
                     const SizedBox(height: 16),
-                    _wordmark(),
-                    const SizedBox(height: 36),
-                    authCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Create account',
-                              style: GoogleFonts.fraunces(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w700,
-                                  color: kText)),
-                          const SizedBox(height: 4),
-                          Text('Join Reel Mind and start creating.',
-                              style: GoogleFonts.manrope(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                  color: kMuted)),
-                          const SizedBox(height: 24),
-                          authField(
-                            controller: _emailCtrl,
-                            label: 'Email address',
-                            keyboardType: TextInputType.emailAddress,
-                            prefixIcon: Icons.email_outlined,
-                            validator: (v) {
-                              if (v == null || v.isEmpty) {
-                                return 'Enter your email.';
-                              }
-                              if (!v.contains('@')) {
-                                return 'Enter a valid email.';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 14),
-                          authField(
-                            controller: _passwordCtrl,
-                            label: 'Password',
-                            prefixIcon: Icons.lock_outline,
-                            obscure: _obscurePassword,
-                            onToggleObscure: () => setState(
-                                () => _obscurePassword = !_obscurePassword),
-                            validator: (v) {
-                              if (v == null || v.isEmpty) {
-                                return 'Enter a password.';
-                              }
-                              if (v.length < 8) {
-                                return 'Password must be at least 8 characters.';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 14),
-                          authField(
-                            controller: _confirmCtrl,
-                            label: 'Confirm password',
-                            prefixIcon: Icons.lock_outline,
-                            obscure: _obscureConfirm,
-                            onToggleObscure: () => setState(
-                                () => _obscureConfirm = !_obscureConfirm),
-                            validator: (v) {
-                              if (v == null || v.isEmpty) {
-                                return 'Please confirm your password.';
-                              }
-                              if (v != _passwordCtrl.text) {
-                                return 'Passwords do not match.';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _matchIndicator(),
-                          const SizedBox(height: 24),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              style: authButtonStyle(),
-                              onPressed: _isLoading ? null : _submit,
-                              child: _isLoading
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white))
-                                  : Text('Create Account',
-                                      style: GoogleFonts.manrope(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w700)),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text('Already have an account? ',
-                            style: GoogleFonts.manrope(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: kMuted)),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Text('Sign in',
-                              style: GoogleFonts.manrope(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: kBrand)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 40),
+                    _heroCard(),
+                    const SizedBox(height: 16),
+                    _formCard(),
                   ],
                 ),
               ),
@@ -182,50 +105,242 @@ class _SignUpScreenState extends State<SignUpScreen> {
     );
   }
 
-  Widget _wordmark() {
-    return RichText(
-      text: TextSpan(
-        children: [
-          TextSpan(
-            text: 'reel ',
-            style: GoogleFonts.fraunces(
-                fontSize: 28,
-                fontWeight: FontWeight.w700,
-                color: kText,
-                letterSpacing: -1),
+  // ── Top navigation row ───────────────────────────────────────────────────────
+
+  Widget _navRow(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Color.fromRGBO(255, 255, 255, 0.80),
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x14122033),
+                  blurRadius: 8,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.chevron_left_rounded,
+              color: kText,
+              size: 22,
+            ),
           ),
-          TextSpan(
-            text: 'mind',
+        ),
+        Column(
+          children: [
+            Text(
+              'ACCOUNT SETUP',
+              style: GoogleFonts.manrope(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.8,
+                color: const Color(0xFF94A3B8),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Step 1 of 5',
+              style: GoogleFonts.manrope(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: kText,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(width: 44),
+      ],
+    );
+  }
+
+  // ── Hero card ───────────────────────────────────────────────────────────────
+
+  Widget _heroCard() {
+    return glassCard(
+      padding: const EdgeInsets.all(22),
+      radius: 32,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              brandChip('👤  New creator'),
+              softChip('2 min setup'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'GET STARTED',
+            style: GoogleFonts.manrope(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 2.4,
+              color: kBrandDeep,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Create your account, then teach Reel Mind what your content feels like.',
             style: GoogleFonts.fraunces(
-                fontSize: 28,
-                fontWeight: FontWeight.w700,
-                color: kBrand,
-                letterSpacing: -1),
+              fontSize: 34,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.04 * 34,
+              color: kText,
+              height: 1.02,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'After sign up, you will answer a short onboarding survey about your topics, captions, creators you study, and example videos.',
+            style: GoogleFonts.manrope(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: kMuted,
+              height: 1.6,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _matchIndicator() {
-    final password = _passwordCtrl.text;
-    final confirm = _confirmCtrl.text;
+  // ── Form card ───────────────────────────────────────────────────────────────
 
-    if (confirm.isEmpty) return const SizedBox.shrink();
+  Widget _formCard() {
+    return glassCard(
+      padding: const EdgeInsets.all(18),
+      radius: 26,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          protoField(
+            label: 'Full name',
+            controller: _nameCtrl,
+            hint: 'Your name',
+            validator: (v) {
+              if (v == null || v.trim().isEmpty) return 'Enter your name.';
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          protoField(
+            label: 'Email',
+            controller: _emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            hint: 'you@example.com',
+            validator: (v) {
+              if (v == null || v.isEmpty) return 'Enter your email.';
+              if (!v.contains('@')) return 'Enter a valid email.';
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          protoField(
+            label: 'Password',
+            controller: _passwordCtrl,
+            isPassword: true,
+            obscure: _obscurePassword,
+            hint: 'Create a secure password',
+            onToggleObscure: () =>
+                setState(() => _obscurePassword = !_obscurePassword),
+            validator: (v) {
+              if (v == null || v.isEmpty) return 'Enter a password.';
+              if (v.length < 8) {
+                return 'Password must be at least 8 characters.';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 20),
+          _primaryButton(
+            label: 'Create Account',
+            icon: Icons.arrow_forward_rounded,
+            onPressed: _isLoading ? null : _submit,
+            isLoading: _isLoading,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Already have an account? ',
+                style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: kMuted,
+                ),
+              ),
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Text(
+                  'Sign in',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: kBrand,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
-    final matches = password == confirm;
-    final color = matches ? kTeal : const Color(0xFFEF4444);
-    final icon = matches ? Icons.check_circle_outline : Icons.cancel_outlined;
-    final label = matches ? 'Passwords match' : 'Passwords do not match';
+  // ── Button helper ────────────────────────────────────────────────────────────
 
-    return Row(
-      children: [
-        Icon(icon, size: 15, color: color),
-        const SizedBox(width: 6),
-        Text(label,
-            style: GoogleFonts.manrope(
-                fontSize: 12, fontWeight: FontWeight.w600, color: color)),
-      ],
+  Widget _primaryButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    bool isLoading = false,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kBrand,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: kBrand.withValues(alpha: 0.6),
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(vertical: 15),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shadowColor: kBrand.withValues(alpha: 0.28),
+        ).copyWith(
+          elevation: WidgetStateProperty.all(8),
+        ),
+        onPressed: onPressed,
+        child: isLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    label,
+                    style: GoogleFonts.manrope(
+                        fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                ],
+              ),
+      ),
     );
   }
 }

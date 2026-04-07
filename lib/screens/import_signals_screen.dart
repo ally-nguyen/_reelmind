@@ -1,8 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
+import '../services/firestore_service.dart';
 import '../widgets/app_background.dart';
 import '../widgets/glass_card.dart';
+
+class _CreatorEntry {
+  final String name;
+  final TextEditingController styleCtrl;
+  _CreatorEntry({required this.name, String style = ''})
+      : styleCtrl = TextEditingController(text: style);
+  void dispose() => styleCtrl.dispose();
+}
+
+class _VideoEntry {
+  final TextEditingController nameCtrl;
+  final TextEditingController notesCtrl;
+  final String? url;
+  final String? storagePath;
+
+  _VideoEntry({
+    String name = '',
+    String notes = '',
+    this.url,
+    this.storagePath,
+  })  : nameCtrl = TextEditingController(text: name),
+        notesCtrl = TextEditingController(text: notes);
+
+  bool get isUploaded => url != null && url!.isNotEmpty;
+
+  void dispose() {
+    nameCtrl.dispose();
+    notesCtrl.dispose();
+  }
+}
 
 const _kSuggestedTopics = [
   'Creator economy', 'Productivity', 'Lifestyle', 'Personal finance',
@@ -19,9 +51,6 @@ class ImportSignalsScreen extends StatefulWidget {
 }
 
 class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
-  // Reel links — one controller per link
-  final List<TextEditingController> _reelCtrls = [TextEditingController()];
-
   // Captions — one controller per caption
   final List<TextEditingController> _captionCtrls = [TextEditingController()];
 
@@ -31,25 +60,83 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
 
   // Creators
   final _creatorCtrl = TextEditingController();
-  final List<String> _creators = [];
+  final List<_CreatorEntry> _creators = [];
+
+  // Videos
+  final List<_VideoEntry> _videos = [];
+
+  bool _isAnalyzing = false;
+  bool _isLoadingExisting = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadExistingSignals();
+  }
+
+  Future<void> _loadExistingSignals() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      setState(() => _isLoadingExisting = false);
+      return;
+    }
+    final signals = await FirestoreService.getSignals(uid);
+    if (!mounted) return;
+    if (signals != null) {
+      final captions = List<String>.from(signals['captions'] ?? []);
+      final topics = List<String>.from(signals['topics'] ?? []);
+      final rawCreators = signals['creators'] ?? [];
+
+      final rawVideos = signals['videos'] ?? [];
+      setState(() {
+        if (captions.isNotEmpty) {
+          for (final c in _captionCtrls) { c.dispose(); }
+          _captionCtrls
+            ..clear()
+            ..addAll(captions.map((t) => TextEditingController(text: t)));
+        }
+        _selectedTopics
+          ..clear()
+          ..addAll(topics);
+        for (final e in _creators) { e.dispose(); }
+        _creators.clear();
+        for (final c in rawCreators) {
+          if (c is String) {
+            _creators.add(_CreatorEntry(name: c));
+          } else if (c is Map) {
+            _creators.add(_CreatorEntry(
+              name: (c['name'] ?? '').toString(),
+              style: (c['style'] ?? '').toString(),
+            ));
+          }
+        }
+        for (final v in _videos) { v.dispose(); }
+        _videos.clear();
+        for (final v in rawVideos) {
+          if (v is Map) {
+            final urlVal = (v['url'] ?? '').toString();
+            final pathVal = (v['storagePath'] ?? '').toString();
+            _videos.add(_VideoEntry(
+              name: (v['name'] ?? '').toString(),
+              notes: (v['notes'] ?? '').toString(),
+              url: urlVal.isEmpty ? null : urlVal,
+              storagePath: pathVal.isEmpty ? null : pathVal,
+            ));
+          }
+        }
+      });
+    }
+    setState(() => _isLoadingExisting = false);
+  }
 
   @override
   void dispose() {
-    for (final c in _reelCtrls) { c.dispose(); }
     for (final c in _captionCtrls) { c.dispose(); }
+    for (final e in _creators) { e.dispose(); }
+    for (final v in _videos) { v.dispose(); }
     _customTopicCtrl.dispose();
     _creatorCtrl.dispose();
     super.dispose();
-  }
-
-  void _addReelField() => setState(() => _reelCtrls.add(TextEditingController()));
-
-  void _removeReelField(int i) {
-    if (_reelCtrls.length == 1) return;
-    setState(() {
-      _reelCtrls[i].dispose();
-      _reelCtrls.removeAt(i);
-    });
   }
 
   void _addCaptionField() => setState(() => _captionCtrls.add(TextEditingController()));
@@ -82,31 +169,54 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
   }
 
   void _addCreator() {
-    final creator = _creatorCtrl.text.trim();
-    if (creator.isEmpty || _creators.contains(creator)) return;
+    final name = _creatorCtrl.text.trim();
+    if (name.isEmpty || _creators.any((c) => c.name == name)) return;
     setState(() {
-      _creators.add(creator);
+      _creators.add(_CreatorEntry(name: name));
       _creatorCtrl.clear();
     });
   }
 
-  void _removeCreator(String creator) {
-    setState(() => _creators.remove(creator));
+  void _removeCreator(int index) {
+    setState(() {
+      _creators[index].dispose();
+      _creators.removeAt(index);
+    });
   }
 
-  void _submit() {
-    Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Signals saved — generating your profile.',
-            style: GoogleFonts.manrope(
-                fontSize: 13, fontWeight: FontWeight.w600)),
-        backgroundColor: kNavy,
-        behavior: SnackBarBehavior.floating,
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
+  Future<void> _analyze() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final captions = _captionCtrls
+        .map((c) => c.text)
+        .where((t) => t.trim().isNotEmpty)
+        .toList();
+    final topics = _selectedTopics.toList();
+    final creatorMaps = _creators
+        .map((e) => {'name': e.name, 'style': e.styleCtrl.text.trim()})
+        .toList();
+    final videoMaps = _videos
+        .map((v) => {
+              'name': v.nameCtrl.text.trim(),
+              'notes': v.notesCtrl.text.trim(),
+              'url': v.url ?? '',
+              'storagePath': v.storagePath ?? '',
+            })
+        .toList();
+
+    setState(() => _isAnalyzing = true);
+
+    if (uid != null) {
+      await FirestoreService.saveSignals(
+        uid,
+        captions: captions,
+        topics: topics,
+        creators: creatorMaps,
+        videos: videoMaps,
+      );
+    }
+
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, '/home', (_) => false);
   }
 
   @override
@@ -121,19 +231,23 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
               children: [
                 _header(context),
                 Expanded(
-                  child: SingleChildScrollView(
+                  child: _isLoadingExisting
+                      ? const Center(
+                          child: CircularProgressIndicator(
+                              color: kBrand, strokeWidth: 2))
+                      : SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(18, 12, 18, 32),
                     child: Column(
                       children: [
-                        _reelLinksSection(),
-                        const SizedBox(height: 16),
                         _captionsSection(),
                         const SizedBox(height: 16),
                         _topicsSection(),
                         const SizedBox(height: 16),
                         _creatorsSection(),
+                        const SizedBox(height: 16),
+                        _videosSection(),
                         const SizedBox(height: 24),
-                        _submitButton(),
+                        _analyzeButton(),
                       ],
                     ),
                   ),
@@ -141,7 +255,73 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
               ],
             ),
           ),
+          if (_isAnalyzing) _loadingOverlay(),
         ],
+      ),
+    );
+  }
+
+  Widget _loadingOverlay() {
+    return Container(
+      color: const Color(0xCC0F172A),
+      child: Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 36),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8F4F0),
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x33000000),
+                blurRadius: 40,
+                offset: Offset(0, 16),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: kBrand.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: CircularProgressIndicator(
+                    color: kBrand,
+                    strokeWidth: 3,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Analyzing your signals',
+                style: GoogleFonts.fraunces(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: kText,
+                  height: 1.2,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Saving your captions, topics, and creator references so Claude can generate ideas tailored to your style.',
+                style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: kMuted,
+                  height: 1.55,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -189,39 +369,7 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
     );
   }
 
-  // ── Section 1: Reel Links ─────────────────────────────────────────────────
-  Widget _reelLinksSection() {
-    return GlassCard(
-      padding: const EdgeInsets.all(18),
-      borderRadius: 26,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _sectionHeader(
-            icon: Icons.link,
-            iconColor: kNavy,
-            title: 'Reel links',
-            subtitle: 'Add one link per field — your own reels or public references.',
-          ),
-          const SizedBox(height: 14),
-          ...List.generate(_reelCtrls.length, (i) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _entryField(
-              controller: _reelCtrls[i],
-              hint: 'https://instagram.com/reel/...',
-              keyboardType: TextInputType.url,
-              index: i + 1,
-              canRemove: _reelCtrls.length > 1,
-              onRemove: () => _removeReelField(i),
-            ),
-          )),
-          _addFieldButton(label: 'Add another link', onTap: _addReelField),
-        ],
-      ),
-    );
-  }
-
-  // ── Section 2: Captions ───────────────────────────────────────────────────
+  // ── Section 1: Captions ───────────────────────────────────────────────────
   Widget _captionsSection() {
     return GlassCard(
       padding: const EdgeInsets.all(18),
@@ -473,51 +621,241 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
           ),
           if (_creators.isNotEmpty) ...[
             const SizedBox(height: 14),
-            ..._creators.map((c) => _creatorRow(c)),
+            ...List.generate(_creators.length, (i) => _creatorRow(i)),
           ],
         ],
       ),
     );
   }
 
-  Widget _creatorRow(String creator) {
+  Widget _creatorRow(int index) {
+    final entry = _creators[index];
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: const Color(0xB8FFFFFF),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0x140F172A)),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: kNavy.withValues(alpha: 0.08),
-                shape: BoxShape.circle,
+            Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: kNavy.withValues(alpha: 0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.person_outline,
+                      size: 16, color: kNavy),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(entry.name,
+                      style: GoogleFonts.manrope(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: kText)),
+                ),
+                GestureDetector(
+                  onTap: () => _removeCreator(index),
+                  child: const Icon(Icons.close,
+                      size: 18, color: Color(0xFF94A3B8)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: entry.styleCtrl,
+              maxLines: 2,
+              style: GoogleFonts.manrope(fontSize: 13, color: kText),
+              decoration: InputDecoration(
+                hintText:
+                    'What do you like about their style? (optional)',
+                hintStyle: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: kMuted.withValues(alpha: 0.6)),
+                filled: true,
+                fillColor: const Color(0x0A0F172A),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide:
+                      const BorderSide(color: kBrand, width: 1.5),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 10),
+                isDense: true,
               ),
-              child: const Icon(Icons.person_outline,
-                  size: 16, color: kNavy),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(creator,
-                  style: GoogleFonts.manrope(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: kText)),
-            ),
-            GestureDetector(
-              onTap: () => _removeCreator(creator),
-              child: const Icon(Icons.close,
-                  size: 18, color: Color(0xFF94A3B8)),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ── Section 5: Video References ──────────────────────────────────────────
+  Widget _videosSection() {
+    return GlassCard(
+      padding: const EdgeInsets.all(18),
+      borderRadius: 26,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionHeader(
+            icon: Icons.videocam_outlined,
+            iconColor: const Color(0xFF0F766E),
+            title: 'Video references',
+            subtitle:
+                'Reference videos that capture the pacing, framing, and style you want to replicate.',
+          ),
+          const SizedBox(height: 14),
+          if (_videos.isNotEmpty) ...[
+            ...List.generate(_videos.length, (i) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _videoRow(i),
+                )),
+            const SizedBox(height: 4),
+          ],
+          _addFieldButton(
+              label: 'Add video reference', onTap: _addVideoRow),
+        ],
+      ),
+    );
+  }
+
+  void _addVideoRow() => setState(() => _videos.add(_VideoEntry()));
+
+  void _removeVideoRow(int i) {
+    setState(() {
+      _videos[i].dispose();
+      _videos.removeAt(i);
+    });
+  }
+
+  Widget _videoRow(int index) {
+    final entry = _videos[index];
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xB8FFFFFF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0x140F172A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: entry.isUploaded
+                      ? kTeal.withValues(alpha: 0.10)
+                      : kTeal.withValues(alpha: 0.08),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  entry.isUploaded
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.videocam_outlined,
+                  size: 16,
+                  color: kTeal,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: entry.isUploaded
+                    ? Text(
+                        entry.nameCtrl.text,
+                        style: GoogleFonts.manrope(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: kText),
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    : TextField(
+                        controller: entry.nameCtrl,
+                        style: GoogleFonts.manrope(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: kText),
+                        decoration: InputDecoration(
+                          hintText: 'Video name or filename...',
+                          hintStyle: GoogleFonts.manrope(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: kMuted.withValues(alpha: 0.6)),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                          isDense: true,
+                        ),
+                      ),
+              ),
+              if (entry.isUploaded)
+                Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: kTeal.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Uploaded',
+                    style: GoogleFonts.manrope(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: kTeal,
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 6),
+              GestureDetector(
+                onTap: () => _removeVideoRow(index),
+                child: const Icon(Icons.close,
+                    size: 18, color: Color(0xFF94A3B8)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: entry.notesCtrl,
+            maxLines: 2,
+            style: GoogleFonts.manrope(fontSize: 13, color: kText),
+            decoration: InputDecoration(
+              hintText:
+                  'Style notes: framing, pacing, mood, color palette... (optional)',
+              hintStyle: GoogleFonts.manrope(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: kMuted.withValues(alpha: 0.6)),
+              filled: true,
+              fillColor: const Color(0x0A0F172A),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: kBrand, width: 1.5),
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              isDense: true,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -674,9 +1012,9 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
     );
   }
 
-  Widget _submitButton() {
+  Widget _analyzeButton() {
     return GestureDetector(
-      onTap: _submit,
+      onTap: _isAnalyzing ? null : _analyze,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -695,10 +1033,9 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.file_download_outlined,
-                color: Colors.white, size: 18),
+            const Icon(Icons.insights, color: Colors.white, size: 18),
             const SizedBox(width: 10),
-            Text('Save & analyze signals',
+            Text('Analyze signals',
                 style: GoogleFonts.manrope(
                     fontSize: 15,
                     fontWeight: FontWeight.w800,

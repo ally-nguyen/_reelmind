@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
 import '../widgets/app_background.dart';
 import '../widgets/auth_helpers.dart';
@@ -30,10 +31,29 @@ class _LoginScreenState extends State<LoginScreen> {
   void _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-    Navigator.pushReplacementNamed(context, '/');
+    try {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _emailCtrl.text.trim(),
+        password: _passwordCtrl.text,
+      );
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, '/home', (_) => false);
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      final msg = switch (e.code) {
+        'user-not-found' => 'No account found for that email.',
+        'wrong-password' => 'Incorrect password.',
+        'invalid-credential' => 'Invalid email or password.',
+        'invalid-email' => 'Please enter a valid email address.',
+        'user-disabled' => 'This account has been disabled.',
+        'too-many-requests' => 'Too many attempts. Try again later.',
+        _ => 'Sign-in failed. Please try again.',
+      };
+      ScaffoldMessenger.of(context)
+          .showSnackBar(authSnackBar(msg, isError: true));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   void _showForgotPassword() {
@@ -45,8 +65,8 @@ class _LoginScreenState extends State<LoginScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom),
+        padding:
+            EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
         child: Container(
           margin: const EdgeInsets.fromLTRB(16, 0, 16, 32),
           padding: const EdgeInsets.all(24),
@@ -89,12 +109,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   keyboardType: TextInputType.emailAddress,
                   prefixIcon: Icons.email_outlined,
                   validator: (v) {
-                    if (v == null || v.isEmpty) {
-                      return 'Enter your email.';
-                    }
-                    if (!v.contains('@')) {
-                      return 'Enter a valid email.';
-                    }
+                    if (v == null || v.isEmpty) return 'Enter your email.';
+                    if (!v.contains('@')) return 'Enter a valid email.';
                     return null;
                   },
                 ),
@@ -103,12 +119,25 @@ class _LoginScreenState extends State<LoginScreen> {
                   width: double.infinity,
                   child: ElevatedButton(
                     style: authButtonStyle(),
-                    onPressed: () {
-                      if (resetKey.currentState!.validate()) {
+                    onPressed: () async {
+                      if (!resetKey.currentState!.validate()) return;
+                      try {
+                        await FirebaseAuth.instance.sendPasswordResetEmail(
+                          email: resetCtrl.text.trim(),
+                        );
+                        if (!context.mounted) return;
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(
                           authSnackBar(
-                              'Reset link sent to ${resetCtrl.text}'),
+                              'Reset link sent to ${resetCtrl.text.trim()}'),
+                        );
+                      } on FirebaseAuthException {
+                        if (!context.mounted) return;
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          authSnackBar(
+                              'Could not send reset link. Check the email address.',
+                              isError: true),
                         );
                       }
                     },
@@ -134,121 +163,17 @@ class _LoginScreenState extends State<LoginScreen> {
           const AppBackground(),
           SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 40),
               child: Form(
                 key: _formKey,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const SizedBox(height: 56),
-                    const ReelMindLogo(size: 88),
-                    const SizedBox(height: 20),
-                    _wordmark(),
-                    const SizedBox(height: 48),
-                    authCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Welcome back',
-                              style: GoogleFonts.fraunces(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w700,
-                                  color: kText)),
-                          const SizedBox(height: 4),
-                          Text('Sign in to your account',
-                              style: GoogleFonts.manrope(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                  color: kMuted)),
-                          const SizedBox(height: 24),
-                          authField(
-                            controller: _emailCtrl,
-                            label: 'Email address',
-                            keyboardType: TextInputType.emailAddress,
-                            prefixIcon: Icons.email_outlined,
-                            validator: (v) {
-                              if (v == null || v.isEmpty) {
-                                return 'Enter your email.';
-                              }
-                              if (!v.contains('@')) {
-                                return 'Enter a valid email.';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 14),
-                          authField(
-                            controller: _passwordCtrl,
-                            label: 'Password',
-                            obscure: _obscurePassword,
-                            prefixIcon: Icons.lock_outline,
-                            onToggleObscure: () => setState(
-                                () => _obscurePassword = !_obscurePassword),
-                            validator: (v) {
-                              if (v == null || v.isEmpty) {
-                                return 'Enter your password.';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: GestureDetector(
-                              onTap: _showForgotPassword,
-                              child: Text('Forgot password?',
-                                  style: GoogleFonts.manrope(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                      color: kBrand)),
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              style: authButtonStyle(),
-                              onPressed: _isLoading ? null : _submit,
-                              child: _isLoading
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white))
-                                  : Text('Sign In',
-                                      style: GoogleFonts.manrope(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.w700)),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text("Don't have an account? ",
-                            style: GoogleFonts.manrope(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: kMuted)),
-                        GestureDetector(
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => const SignUpScreen()),
-                          ),
-                          child: Text('Sign up',
-                              style: GoogleFonts.manrope(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: kBrand)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 40),
+                    _heroCard(),
+                    const SizedBox(height: 16),
+                    _formCard(),
+                    const SizedBox(height: 16),
+                    _signUpCard(),
                   ],
                 ),
               ),
@@ -259,39 +184,262 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _wordmark() {
-    return Column(
-      children: [
-        RichText(
-          text: TextSpan(
+  // ── Hero card ───────────────────────────────────────────────────────────────
+
+  Widget _heroCard() {
+    return glassCard(
+      padding: const EdgeInsets.all(22),
+      radius: 32,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              TextSpan(
-                text: 'reel ',
-                style: GoogleFonts.fraunces(
-                    fontSize: 34,
-                    fontWeight: FontWeight.w700,
-                    color: kText,
-                    letterSpacing: -1),
-              ),
-              TextSpan(
-                text: 'mind',
-                style: GoogleFonts.fraunces(
-                    fontSize: 34,
-                    fontWeight: FontWeight.w700,
-                    color: kBrand,
-                    letterSpacing: -1),
-              ),
+              brandChip('🔒  Welcome back'),
+              softChip('Creator login'),
             ],
           ),
-        ),
-        const SizedBox(height: 4),
-        Text('AI-powered creator studio',
+          const SizedBox(height: 16),
+          Text(
+            'REEL MIND',
             style: GoogleFonts.manrope(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: kMuted,
-                letterSpacing: 0.2)),
-      ],
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 2.4,
+              color: kBrandDeep,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Log in and pick up right where your next idea left off.',
+            style: GoogleFonts.fraunces(
+              fontSize: 36,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.04 * 36,
+              color: kText,
+              height: 1.02,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Access your saved idea drafts, imported references, and AI-generated scripts in one place.',
+            style: GoogleFonts.manrope(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: kMuted,
+              height: 1.6,
+            ),
+          ),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: AspectRatio(
+              aspectRatio: 1.55,
+              child: Image.network(
+                'https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=900&q=80',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: const Color(0xFFE2D9CF),
+                  child: const Icon(Icons.image_outlined,
+                      size: 40, color: Color(0xFF94A3B8)),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Form card ───────────────────────────────────────────────────────────────
+
+  Widget _formCard() {
+    return glassCard(
+      padding: const EdgeInsets.all(18),
+      radius: 26,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          protoField(
+            label: 'Email',
+            controller: _emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            hint: 'you@example.com',
+            validator: (v) {
+              if (v == null || v.isEmpty) return 'Enter your email.';
+              if (!v.contains('@')) return 'Enter a valid email.';
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          protoField(
+            label: 'Password',
+            controller: _passwordCtrl,
+            isPassword: true,
+            obscure: _obscurePassword,
+            onToggleObscure: () =>
+                setState(() => _obscurePassword = !_obscurePassword),
+            validator: (v) {
+              if (v == null || v.isEmpty) return 'Enter your password.';
+              return null;
+            },
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _showForgotPassword,
+              child: Text(
+                'Forgot password?',
+                style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: kBrand,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          _primaryButton(
+            label: 'Log in',
+            icon: Icons.arrow_forward_rounded,
+            onPressed: _isLoading ? null : _submit,
+            isLoading: _isLoading,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Sign-up promo card ───────────────────────────────────────────────────────
+
+  Widget _signUpCard() {
+    return glassCard(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      radius: 26,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'New to Reel Mind?',
+                  style: GoogleFonts.manrope(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: kText,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Create an account and answer a short style survey.',
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: kMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SignUpScreen()),
+            ),
+            child: Text(
+              'Sign up',
+              style: GoogleFonts.manrope(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: kBrandDeep,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Button helpers ───────────────────────────────────────────────────────────
+
+  Widget _primaryButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    bool isLoading = false,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kBrand,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: kBrand.withValues(alpha: 0.6),
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(vertical: 15),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shadowColor: kBrand.withValues(alpha: 0.28),
+        ).copyWith(
+          elevation: WidgetStateProperty.all(8),
+        ),
+        onPressed: onPressed,
+        child: isLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    label,
+                    style: GoogleFonts.manrope(
+                        fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _secondaryButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          backgroundColor: Color.fromRGBO(255, 255, 255, 0.72),
+          foregroundColor: kText,
+          side: const BorderSide(color: Color(0x140F172A)),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        ),
+        onPressed: onPressed,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 18),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: GoogleFonts.manrope(
+                  fontSize: 14, fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -338,7 +486,6 @@ class _ReelLogoPainter extends CustomPainter {
     final center = Offset(cx, cy);
     final r = size.width / 2;
 
-    // Background circle with gradient
     final bgPaint = Paint()
       ..shader = RadialGradient(
         colors: [const Color(0xFF1C3050), kNavy],
@@ -347,7 +494,6 @@ class _ReelLogoPainter extends CustomPainter {
       ).createShader(Rect.fromCircle(center: center, radius: r));
     canvas.drawCircle(center, r, bgPaint);
 
-    // Outer reel ring
     final ringRadius = r * 0.80;
     final ringPaint = Paint()
       ..color = kBrand
@@ -355,7 +501,6 @@ class _ReelLogoPainter extends CustomPainter {
       ..strokeWidth = r * 0.055;
     canvas.drawCircle(center, ringRadius, ringPaint);
 
-    // Sprocket holes on the ring
     const holeCount = 8;
     final holeFill = Paint()..color = const Color(0xFFFFFFFF);
     final holeErase = Paint()..color = kNavy;
@@ -367,7 +512,6 @@ class _ReelLogoPainter extends CustomPainter {
       canvas.drawCircle(Offset(hx, hy), r * 0.042, holeErase);
     }
 
-    // Three spokes
     final spokePaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.18)
       ..strokeWidth = r * 0.055
@@ -381,7 +525,6 @@ class _ReelLogoPainter extends CustomPainter {
       );
     }
 
-    // Center hub
     final hubGrad = Paint()
       ..shader = RadialGradient(
         colors: [kBrand, kBrandDeep],
@@ -389,7 +532,6 @@ class _ReelLogoPainter extends CustomPainter {
     canvas.drawCircle(center, r * 0.28, hubGrad);
     canvas.drawCircle(center, r * 0.14, Paint()..color = kNavy);
 
-    // Sparkle accent (top-right)
     _drawSparkle(canvas, Offset(cx + r * 0.52, cy - r * 0.52), r * 0.10);
   }
 

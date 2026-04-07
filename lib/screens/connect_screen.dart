@@ -74,7 +74,6 @@ class ConnectScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const RmChip(label: 'Signal Import', style: ChipStyle.brand, icon: Icons.camera_alt_outlined),
-              const RmChip(label: 'Step 1 of 2'),
             ],
           ),
           const SizedBox(height: 16),
@@ -86,53 +85,11 @@ class ConnectScreen extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           Text(
-            'Import your own reel links, captions, transcripts, saved topics, and creator references. Reel Mind turns those inputs into a personalized collection of your next best video ideas.',
+            'Import your own captions, videos, saved topics, and creator references. Reel Mind turns those inputs into a personalized collection of your next best video ideas.',
             style: mutedBodyStyle,
           ),
           const SizedBox(height: 18),
-          Row(
-            children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
-                  child: Image.network(
-                    'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80',
-                    height: 112,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(height: 112, color: const Color(0xFFFFD6C3)),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
-                  child: Image.network(
-                    'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=600&q=80',
-                    height: 112,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(height: 112, color: const Color(0xFFD6F0EE)),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
-                  child: Image.network(
-                    'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=600&q=80',
-                    height: 112,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(height: 112, color: const Color(0xFFF6F4EF)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
           _importBtn(context),
-          const SizedBox(height: 10),
-          _secondaryBtn(context, Icons.play_circle_outline, 'Preview sample workspace', '/'),
         ],
       ),
     );
@@ -171,8 +128,8 @@ class ConnectScreen extends StatelessWidget {
             Icons.favorite_border,
             const Color(0xFF0F1115),
             Colors.white,
-            'Post links + references',
-            'Bring in your own reels, public post links, and creators you want to study.',
+            'Upload videos + references',
+            'Bring in your own reels and creators you want to study.',
           ),
           const SizedBox(height: 12),
           _analysisItem(
@@ -187,8 +144,8 @@ class ConnectScreen extends StatelessWidget {
             Icons.local_fire_department_outlined,
             kTeal,
             Colors.white,
-            'Topics + hashtags',
-            'Add niches, recurring themes, and audience questions to guide idea generation.',
+            'Topics',
+            'Add niches and recurring themesto guide idea generation.',
           ),
         ],
       ),
@@ -255,10 +212,13 @@ class ConnectScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _afterItem(Icons.storage_outlined,
-              'A per-user Firestore profile is cached for fast idea generation and draft memory.'),
+              'A profile is made for you for fast idea generation and draft memory.'),
           const SizedBox(height: 10),
           _afterItem(Icons.auto_awesome,
-              'Tap "Generate for me" to get a title and 5–7 bullets from your imported signals.'),
+              'Tap "Generate for me" to formulate 5–7 bullet points of a brand new scripted idea based on your inspiration.'),
+          const SizedBox(height: 10),
+          _afterItem(Icons.auto_awesome,
+              'Tap "New Idea" to start jotting down your own script for your next video, but if you need assistance, tap "AI Assist" to help build on your existing idea!'),
         ],
       ),
     );

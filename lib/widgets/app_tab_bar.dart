@@ -8,12 +8,14 @@ class AppTabBar extends StatelessWidget {
   final TabDest active;
   final String fabRoute;
   final IconData fabIcon;
+  final bool absorbing;
 
   const AppTabBar({
     super.key,
     required this.active,
     this.fabRoute = '/workspace',
     this.fabIcon = Icons.add,
+    this.absorbing = false,
   });
 
   void _navigate(BuildContext context, String route) {
@@ -26,7 +28,9 @@ class AppTabBar extends StatelessWidget {
       left: 18,
       right: 18,
       bottom: 18,
-      child: SizedBox(
+      child: AbsorbPointer(
+        absorbing: absorbing,
+        child: SizedBox(
         height: 94,
         child: Stack(
           clipBehavior: Clip.none,
@@ -55,8 +59,8 @@ class AppTabBar extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
+                    _tabItem(context, Icons.home_outlined, 'Home', '/home', active == TabDest.home),
                     _tabItem(context, Icons.link, 'Import', '/connect', active == TabDest.connect),
-                    _tabItem(context, Icons.home_outlined, 'Home', '/', active == TabDest.home),
                     const SizedBox(width: 52),
                     _tabItem(context, Icons.bar_chart_outlined, 'Profile', '/profile', active == TabDest.profile),
                     _tabItem(context, Icons.settings_outlined, 'Settings', '/settings', active == TabDest.settings),
@@ -93,6 +97,7 @@ class AppTabBar extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }

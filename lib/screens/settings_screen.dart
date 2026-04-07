@@ -2,13 +2,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
+import '../services/app_preferences.dart';
 import '../widgets/app_background.dart';
 import '../widgets/app_tab_bar.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/rm_chip.dart';
 import 'login_screen.dart';
-import 'archived_ideas_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -25,7 +26,8 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   // ── Personal Info state ──────────────────────────────────────────────────
   File? _profileImage;
-  final String _email = 'user@example.com';
+  String get _email =>
+      FirebaseAuth.instance.currentUser?.email ?? 'Not signed in';
 
   late final TabController _tabController;
 
@@ -649,8 +651,10 @@ class _SettingsScreenState extends State<SettingsScreen>
                   padding: const EdgeInsets.symmetric(
                       horizontal: 20, vertical: 10),
                 ),
-                onPressed: () {
+                onPressed: () async {
                   Navigator.pop(ctx);
+                  await FirebaseAuth.instance.signOut();
+                  if (!context.mounted) return;
                   Navigator.pushAndRemoveUntil(
                     context,
                     MaterialPageRoute(
@@ -685,8 +689,6 @@ class _SettingsScreenState extends State<SettingsScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _heroCard(),
-          const SizedBox(height: 16),
-          _integrations(),
           const SizedBox(height: 16),
           _preferences(),
           const SizedBox(height: 16),
@@ -740,71 +742,6 @@ class _SettingsScreenState extends State<SettingsScreen>
       ),
     );
   }
-
-  Widget _integrations() {
-    return GlassCard(
-      padding: const EdgeInsets.all(18),
-      borderRadius: 26,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Integrations', style: sectionTitle),
-              const RmChip(label: 'Configured', style: ChipStyle.teal),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xB8FFFFFF),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: const Color(0x0F0F172A)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: kBrand,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Icon(Icons.camera_alt_outlined,
-                      color: Colors.white, size: 20),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Instagram references',
-                          style: GoogleFonts.manrope(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: kText)),
-                      const SizedBox(height: 4),
-                      Text(
-                          'Public links, your own reel URLs, captions, and topic inputs',
-                          style: GoogleFonts.manrope(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              color: kMuted)),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right,
-                    color: Color(0xFF94A3B8), size: 20),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _preferences() {
     return GlassCard(
       padding: const EdgeInsets.all(18),
@@ -819,63 +756,27 @@ class _SettingsScreenState extends State<SettingsScreen>
               const RmChip(label: 'Personalized'),
             ],
           ),
-          const SizedBox(height: 16),
-          _prefToggle(
-            'Auto-refresh taste profile',
-            'Refresh imported signals every 24 hours',
-            _autoRefresh,
-            (v) => setState(() => _autoRefresh = v),
-          ),
           const SizedBox(height: 12),
-          _prefToggle(
-            'Preload AI scripts in editor',
-            'Open generated bullets directly in workspace',
-            _preloadScripts,
-            (v) => setState(() => _preloadScripts = v),
-          ),
-          const SizedBox(height: 12),
-          _archivedRow(),
-        ],
-      ),
-    );
-  }
-
-  Widget _archivedRow() {
-    return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const ArchivedIdeasScreen()),
-      ),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: const Color(0xB8FFFFFF),
-          borderRadius: BorderRadius.circular(22),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Archived ideas',
-                      style: GoogleFonts.manrope(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                          color: kText)),
-                  const SizedBox(height: 4),
-                  Text('Browse all ideas marked as posted',
-                      style: GoogleFonts.manrope(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: kMuted)),
-                ],
-              ),
+          ValueListenableBuilder<bool>(
+            valueListenable: AppPreferences.preloadScripts,
+            builder: (_, value, __) => _prefToggle(
+              'Preload AI scripts in editor',
+              'Open generated bullets directly in workspace',
+              value,
+              (v) => AppPreferences.preloadScripts.value = v,
             ),
-            const Icon(Icons.chevron_right,
-                color: Color(0xFF94A3B8), size: 20),
-          ],
-        ),
+          ),
+          const SizedBox(height: 10),
+          ValueListenableBuilder<bool>(
+            valueListenable: AppPreferences.autoDeleteArchived,
+            builder: (_, value, __) => _prefToggle(
+              'Auto-delete archived ideas',
+              'Permanently remove archived ideas after 30 days',
+              value,
+              (v) => AppPreferences.autoDeleteArchived.value = v,
+            ),
+          ),
+        ],
       ),
     );
   }
