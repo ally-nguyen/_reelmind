@@ -88,7 +88,7 @@ class ConnectScreen extends StatelessWidget {
             'Import your own captions, videos, saved topics, and creator references. Reel Mind turns those inputs into a personalized collection of your next best video ideas.',
             style: mutedBodyStyle,
           ),
-          const SizedBox(height: 18),
+           const SizedBox(height: 18),
           _importBtn(context),
         ],
       ),
