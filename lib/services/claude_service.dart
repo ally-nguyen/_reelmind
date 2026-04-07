@@ -1,11 +1,10 @@
 import 'dart:convert';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import '../models/idea_model.dart';
 
 class ClaudeService {
-  // Pass the key at build time:
-  //   flutter run --dart-define=ANTHROPIC_API_KEY=your-key
-  static const _apiKey = String.fromEnvironment('ANTHROPIC_API_KEY');
+  static String get _apiKey => dotenv.env['ANTHROPIC_API_KEY'] ?? '';
   static const _endpoint = 'https://api.anthropic.com/v1/messages';
   static const _model = 'claude-sonnet-4-6';
 

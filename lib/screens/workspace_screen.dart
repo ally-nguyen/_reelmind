@@ -41,6 +41,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   final GlobalKey _scriptKey = GlobalKey();
   final GlobalKey _statusKey = GlobalKey();
   final GlobalKey _actionsKey = GlobalKey();
+  final ScrollController _scrollCtrl = ScrollController();
 
   @override
   void initState() {
@@ -109,6 +110,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     _debounce?.cancel();
     _titleCtrl.dispose();
     _scriptCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -117,6 +119,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   void _startTutorial() {
     _buildTutorialSteps();
     setState(() => _showTutorial = true);
+  }
+
+  Future<void> _scrollToKey(GlobalKey key) async {
+    final ctx = key.currentContext;
+    if (ctx == null) return;
+    await Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+      alignment: 0.2, // show the widget near the top of the viewport
+    );
   }
 
   void _buildTutorialSteps() {
@@ -137,25 +150,29 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         eyebrow: 'Idea Title & Tags',
         title: 'Name your idea and tag it.',
         body: 'Type a title to give your idea a name. Tap any topic chip to tag this idea — tags help you filter and organise your pipeline later.',
-        spotlightRect: rectOf(_heroKey),
+        onBeforeShow: () => _scrollToKey(_heroKey),
+        spotlightRectBuilder: () => rectOf(_heroKey),
       ),
       TutorialStep(
         eyebrow: 'Bullet-point Script',
         title: 'Build your talking points.',
         body: 'Each line is a bullet point for your video. Press Enter to add a new point. Use "AI assist" to generate additional bullets based on your signals.',
-        spotlightRect: rectOf(_scriptKey),
+        onBeforeShow: () => _scrollToKey(_scriptKey),
+        spotlightRectBuilder: () => rectOf(_scriptKey),
       ),
       TutorialStep(
         eyebrow: 'Production Status',
         title: 'Move ideas through your pipeline.',
         body: 'Tap Draft, Script Ready, or Posted to track where this idea is in production. Your home dashboard counts ideas by status.',
-        spotlightRect: rectOf(_statusKey),
+        onBeforeShow: () => _scrollToKey(_statusKey),
+        spotlightRectBuilder: () => rectOf(_statusKey),
       ),
       TutorialStep(
         eyebrow: 'Actions',
         title: 'Finish up or get more help.',
         body: 'Tap "Done" to save and return home. Tap "AI assist" anytime to let Claude expand your script with more talking points.',
-        spotlightRect: rectOf(_actionsKey),
+        onBeforeShow: () => _scrollToKey(_actionsKey),
+        spotlightRectBuilder: () => rectOf(_actionsKey),
       ),
     ];
   }
@@ -336,6 +353,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             child: AbsorbPointer(
               absorbing: _showTutorial,
               child: SingleChildScrollView(
+                controller: _scrollCtrl,
                 padding: const EdgeInsets.fromLTRB(18, 0, 18, 130),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

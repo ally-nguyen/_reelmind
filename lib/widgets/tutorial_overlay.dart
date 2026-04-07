@@ -6,14 +6,20 @@ class TutorialStep {
   final String eyebrow;
   final String title;
   final String body;
-  /// The screen-space rect to spotlight. Null = no spotlight (centered card).
-  final Rect? spotlightRect;
+  /// Called before this step is shown (e.g. scroll into view). Awaited before
+  /// the spotlight rect is computed and the card fades in.
+  final Future<void> Function()? onBeforeShow;
+  /// Returns the screen-space rect to spotlight. Called lazily after
+  /// [onBeforeShow] completes so the widget is guaranteed to be on screen.
+  /// Return null for a centered card with no spotlight.
+  final Rect? Function()? spotlightRectBuilder;
 
   const TutorialStep({
     required this.eyebrow,
     required this.title,
     required this.body,
-    this.spotlightRect,
+    this.onBeforeShow,
+    this.spotlightRectBuilder,
   });
 }
 
@@ -34,6 +40,7 @@ class TutorialOverlay extends StatefulWidget {
 class _TutorialOverlayState extends State<TutorialOverlay>
     with SingleTickerProviderStateMixin {
   int _step = 0;
+  Rect? _currentRect;
   late AnimationController _ctrl;
   late Animation<double> _fade;
 
@@ -45,7 +52,7 @@ class _TutorialOverlayState extends State<TutorialOverlay>
       duration: const Duration(milliseconds: 280),
     );
     _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
-    _ctrl.forward();
+    _resolveAndShow(0);
   }
 
   @override
@@ -54,12 +61,25 @@ class _TutorialOverlayState extends State<TutorialOverlay>
     super.dispose();
   }
 
+  Future<void> _resolveAndShow(int stepIndex) async {
+    final step = widget.steps[stepIndex];
+    if (step.onBeforeShow != null) await step.onBeforeShow!();
+    if (!mounted) return;
+    // Allow a frame for layout to settle after any scroll
+    await Future.delayed(const Duration(milliseconds: 80));
+    if (!mounted) return;
+    setState(() {
+      _step = stepIndex;
+      _currentRect = step.spotlightRectBuilder?.call();
+    });
+    _ctrl.forward();
+  }
+
   void _advance() {
     if (_step < widget.steps.length - 1) {
-      _ctrl.reverse().then((_) {
+      _ctrl.reverse().then((_) async {
         if (!mounted) return;
-        setState(() => _step++);
-        _ctrl.forward();
+        await _resolveAndShow(_step + 1);
       });
     } else {
       widget.onComplete();
@@ -82,7 +102,7 @@ class _TutorialOverlayState extends State<TutorialOverlay>
           CustomPaint(
             size: size,
             painter: _SpotlightPainter(
-              spotlightRect: current.spotlightRect,
+              spotlightRect: _currentRect,
             ),
           ),
           // Tooltip card
@@ -94,31 +114,34 @@ class _TutorialOverlayState extends State<TutorialOverlay>
 
   Widget _buildCard(BuildContext context, Size size, TutorialStep step,
       bool isLast) {
-    // Position card below spotlight if there is one, above if near bottom,
-    // or centered if no spotlight.
-    double? top;
-    double? bottom;
-    final hPad = 24.0;
+    // Position card below spotlight if there is room, above if near bottom,
+    // or centered if no spotlight. Always clamp to stay on screen.
+    const cardEstHeight = 230.0;
+    const gap = 20.0;
+    const hPad = 24.0;
+    const minTop = 72.0;   // below status bar
+    const maxTop = 0.6;    // at most 60 % down (keeps card above tab bar)
 
-    if (step.spotlightRect != null) {
-      final rect = step.spotlightRect!;
-      const cardEstHeight = 220.0;
-      const gap = 20.0;
+    double top;
+
+    if (_currentRect != null) {
+      final rect = _currentRect!;
       if (rect.bottom + gap + cardEstHeight < size.height - 120) {
-        top = rect.bottom + gap;
+        top = rect.bottom + gap;          // below the spotlight
       } else {
-        bottom = size.height - rect.top + gap;
+        top = rect.top - gap - cardEstHeight; // above the spotlight
       }
     } else {
-      // Centered vertically
       top = size.height * 0.28;
     }
+
+    // Clamp so the card never leaves the visible area
+    top = top.clamp(minTop, size.height * maxTop);
 
     return Positioned(
       left: hPad,
       right: hPad,
       top: top,
-      bottom: bottom,
       child: Material(
         color: Colors.transparent,
         child: Container(

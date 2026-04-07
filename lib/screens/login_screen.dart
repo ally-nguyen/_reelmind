@@ -200,25 +200,17 @@ class _LoginScreenState extends State<LoginScreen> {
               softChip('Creator login'),
             ],
           ),
-          const SizedBox(height: 16),
-          Text(
-            'REEL MIND',
-            style: GoogleFonts.manrope(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 2.4,
-              color: kBrandDeep,
-            ),
-          ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 20),
+          const Center(child: _LogoWithCurvedLabel()),
+          const SizedBox(height: 20),
           Text(
             'Log in and pick up right where your next idea left off.',
             style: GoogleFonts.fraunces(
-              fontSize: 36,
+              fontSize: 30,
               fontWeight: FontWeight.w700,
-              letterSpacing: -0.04 * 36,
+              letterSpacing: -0.04 * 20,
               color: kText,
-              height: 1.02,
+              height: 1.3,
             ),
           ),
           const SizedBox(height: 12),
@@ -229,22 +221,6 @@ class _LoginScreenState extends State<LoginScreen> {
               fontWeight: FontWeight.w500,
               color: kMuted,
               height: 1.6,
-            ),
-          ),
-          const SizedBox(height: 16),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: AspectRatio(
-              aspectRatio: 1.55,
-              child: Image.network(
-                'https://images.unsplash.com/photo-1529139574466-a303027c1d8b?auto=format&fit=crop&w=900&q=80',
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  color: const Color(0xFFE2D9CF),
-                  child: const Icon(Icons.image_outlined,
-                      size: 40, color: Color(0xFF94A3B8)),
-                ),
-              ),
             ),
           ),
         ],
@@ -442,6 +418,86 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
+}
+
+// ── Logo with curved "REEL MIND" label ───────────────────────────────────────
+
+class _LogoWithCurvedLabel extends StatelessWidget {
+  const _LogoWithCurvedLabel();
+
+  @override
+  Widget build(BuildContext context) {
+    const logoSize = 140.0;
+    const totalSize = logoSize + 20.0; // extra room for the text arc
+    return SizedBox(
+      width: totalSize,
+      height: totalSize,
+      child: CustomPaint(
+        painter: _CurvedLabelPainter(
+          text: 'REEL MIND',
+          radius: logoSize / 2 + 12,
+        ),
+        child: const Center(child: ReelMindLogo(size: logoSize)),
+      ),
+    );
+  }
+}
+
+class _CurvedLabelPainter extends CustomPainter {
+  final String text;
+  final double radius;
+
+  const _CurvedLabelPainter({required this.text, required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+
+    final style = GoogleFonts.manrope(
+      fontSize: 11,
+      fontWeight: FontWeight.w800,
+      letterSpacing: 1.8,
+      color: kBrandDeep,
+    );
+
+    final chars = text.split('');
+    final painters = chars.map((c) {
+      return TextPainter(
+        text: TextSpan(text: c, style: style),
+        textDirection: TextDirection.ltr,
+      )..layout();
+    }).toList();
+
+    // Total arc angle needed to fit all characters
+    final totalWidth = painters.fold(0.0, (sum, tp) => sum + tp.width);
+    final totalAngle = totalWidth / radius;
+
+    // Start angle: center the label at the top of the circle
+    double angle = -pi / 2 - totalAngle / 2;
+
+    for (int i = 0; i < chars.length; i++) {
+      final tp = painters[i];
+      final charAngle = tp.width / radius;
+      final midAngle = angle + charAngle / 2;
+
+      canvas.save();
+      canvas.translate(
+        cx + radius * cos(midAngle),
+        cy + radius * sin(midAngle),
+      );
+      canvas.rotate(midAngle + pi / 2); // tangent to the circle
+      canvas.translate(-tp.width / 2, -tp.height / 2);
+      tp.paint(canvas, Offset.zero);
+      canvas.restore();
+
+      angle += charAngle;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CurvedLabelPainter old) =>
+      old.text != text || old.radius != radius;
 }
 
 // ── Reel Mind Logo ────────────────────────────────────────────────────────────

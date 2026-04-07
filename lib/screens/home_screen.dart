@@ -66,25 +66,25 @@ class _HomeScreenState extends State<HomeScreen> {
         eyebrow: 'Idea Dashboard',
         title: 'Generate ideas instantly.',
         body: 'Tap "Generate for me" to let AI create a fresh video idea shaped by your saved signals, or start a blank idea with "New idea".',
-        spotlightRect: rectOf(_heroKey),
+        spotlightRectBuilder: () => rectOf(_heroKey),
       ),
       TutorialStep(
         eyebrow: 'Production Stats',
         title: 'Track your pipeline.',
         body: 'These cards show how many ideas are in Draft, Script Ready, or Posted. Tap any card to see the full list.',
-        spotlightRect: rectOf(_statsKey),
+        spotlightRectBuilder: () => rectOf(_statsKey),
       ),
       TutorialStep(
         eyebrow: 'Recent Ideas',
         title: 'Jump back in.',
         body: 'Your most recently edited ideas live here. Tap any card to open it in the workspace and keep writing.',
-        spotlightRect: rectOf(_recentKey),
+        spotlightRectBuilder: () => rectOf(_recentKey),
       ),
       TutorialStep(
         eyebrow: 'Quick Create',
         title: 'Create from anywhere.',
         body: 'The + button at the bottom opens a blank workspace so you can capture ideas the moment inspiration hits.',
-        spotlightRect: Rect.fromCenter(
+        spotlightRectBuilder: () => Rect.fromCenter(
           center: Offset(size.width / 2, size.height - 86),
           width: 64,
           height: 64,
@@ -94,7 +94,7 @@ class _HomeScreenState extends State<HomeScreen> {
         eyebrow: 'Import Signals',
         title: 'Keep your style fresh.',
         body: 'Tap Import to update your captions, topics, and creator inspirations. The more you add, the more on-brand your AI ideas become.',
-        spotlightRect: Rect.fromCenter(
+        spotlightRectBuilder: () => Rect.fromCenter(
           center: Offset(size.width * 0.34, size.height - 52),
           width: 72,
           height: 60,
@@ -104,7 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
         eyebrow: 'Your Profile',
         title: 'See your content style at a glance.',
         body: 'The Profile tab shows your content-style breakdown, production stats, and a full view of your imported signals — all in one place.',
-        spotlightRect: Rect.fromCenter(
+        spotlightRectBuilder: () => Rect.fromCenter(
           center: Offset(size.width * 0.66, size.height - 52),
           width: 72,
           height: 60,

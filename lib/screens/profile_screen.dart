@@ -33,6 +33,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final GlobalKey _statsKey = GlobalKey();
   final GlobalKey _themesKey = GlobalKey();
   final GlobalKey _nextMoveKey = GlobalKey();
+  final ScrollController _scrollCtrl = ScrollController();
 
   String? get _uid => FirebaseAuth.instance.currentUser?.uid;
 
@@ -40,6 +41,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _loadIdeasAndPredict();
+  }
+
+  @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadIdeasAndPredict() async {
@@ -92,19 +99,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
         eyebrow: 'Production Stats',
         title: 'Track your idea pipeline.',
         body: 'See how many ideas you have in total, how many are in progress, and how many are archived. Tap Archived to browse or restore old ideas.',
-        spotlightRect: rectOf(_statsKey),
+        spotlightRectBuilder: () => rectOf(_statsKey),
       ),
       TutorialStep(
         eyebrow: 'Content-Style Themes',
         title: 'Discover your strongest topics.',
         body: 'Each bar shows a topic from your signals and how many ideas you\'ve tagged with it. The longer the bar, the more you\'ve explored that theme.',
-        spotlightRect: rectOf(_themesKey),
+        spotlightRectBuilder: () => rectOf(_themesKey),
       ),
       TutorialStep(
         eyebrow: 'Best Next Move',
         title: 'Get a personalised AI suggestion.',
         body: 'Claude analyses your pipeline and recommends what to work on next — whether that\'s finishing a draft, posting a ready idea, or generating something new.',
-        spotlightRect: rectOf(_nextMoveKey),
+        onBeforeShow: () => _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeInOut,
+        ),
+        spotlightRectBuilder: () => rectOf(_nextMoveKey),
       ),
     ];
   }
@@ -120,6 +132,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             child: AbsorbPointer(
               absorbing: _showTutorial,
               child: SingleChildScrollView(
+                controller: _scrollCtrl,
                 padding: const EdgeInsets.fromLTRB(18, 0, 18, 130),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
