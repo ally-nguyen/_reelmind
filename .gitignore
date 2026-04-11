@@ -42,8 +42,15 @@ app.*.map.json
 # Environment / secrets — never commit these
 .env
 .env.*
+.env.json          # --dart-define-from-file key file; use .env.json.example as template
 
 # Android Studio will place build artifacts here
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Android signing files
+*.jks
+
+# Firebase Functions dependencies
+functions/node_modules/

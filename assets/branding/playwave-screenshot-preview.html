@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Playwave Icon Preview</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 40px;
+        font-family: Arial, sans-serif;
+        background: #f5f3ef;
+        color: #152033;
+      }
+      h1 {
+        margin: 0 0 24px;
+        font-size: 28px;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 24px;
+        align-items: flex-start;
+      }
+      .card {
+        background: white;
+        border-radius: 28px;
+        padding: 24px;
+        box-shadow: 0 16px 36px rgba(18, 32, 51, 0.08);
+        text-align: center;
+      }
+      .dark {
+        background: #152033;
+        color: white;
+      }
+      .icon-180,
+      .icon-120,
+      .icon-96 {
+        display: block;
+        margin: 0 auto;
+        border-radius: 22%;
+      }
+      .icon-180 { width: 180px; height: 180px; }
+      .icon-120 { width: 120px; height: 120px; }
+      .icon-96 { width: 96px; height: 96px; }
+      p {
+        margin: 14px 0 0;
+        font-size: 14px;
+        color: #5e6a7d;
+      }
+      .dark p { color: rgba(255,255,255,0.78); }
+    </style>
+  </head>
+  <body>
+    <h1>Playwave App Icon Preview</h1>
+    <div class="row">
+      <div class="card">
+        <img class="icon-180" src="./reel-mind-icon-playwave.svg" alt="Playwave 180" />
+        <p>180 px preview</p>
+      </div>
+      <div class="card">
+        <img class="icon-120" src="./reel-mind-icon-playwave.svg" alt="Playwave 120" />
+        <p>120 px preview</p>
+      </div>
+      <div class="card dark">
+        <img class="icon-96" src="./reel-mind-icon-playwave.svg" alt="Playwave 96" />
+        <p>96 px on dark background</p>
+      </div>
+    </div>
+  </body>
+</html>

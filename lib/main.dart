@@ -1,8 +1,12 @@
+// SECURITY: The Anthropic API key lives exclusively in Firebase Secret Manager.
+// It is accessed only by the server-side Cloud Function (functions/index.js).
+// The client never sees the key — no --dart-define, no .env, no binary baking.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:image_picker_android/image_picker_android.dart';
+import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 import 'firebase_options.dart';
 import 'app_theme.dart';
 import 'screens/home_screen.dart';
@@ -21,7 +25,10 @@ import 'screens/survey_videos_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: '.env');
+  final imagePickerPlatform = ImagePickerPlatform.instance;
+  if (imagePickerPlatform is ImagePickerAndroid) {
+    imagePickerPlatform.useAndroidPhotoPicker = true;
+  }
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );

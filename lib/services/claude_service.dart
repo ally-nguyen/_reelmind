@@ -1,346 +1,258 @@
-import 'dart:convert';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:http/http.dart' as http;
+// ── claude_service.dart ──────────────────────────────────────────────────────
+//
+// SECURITY DESIGN
+// ───────────────
+// All calls to the Anthropic API are proxied through the Firebase Cloud
+// Function `callClaude`.  The Anthropic API key lives ONLY in Firebase Secret
+// Manager — it is never in the client binary, git history, or config files.
+//
+// The function verifies the caller's Firebase Auth token, enforces server-side
+// per-user rate limiting, sanitises all inputs, and returns a structured
+// response.  The Flutter client only ever sees the function result, never the
+// Anthropic API directly.
+//
+// The client-side RateLimiter still runs as a first-pass guard to prevent
+// unnecessary network round-trips (e.g. rapid button taps), but the
+// authoritative limit is enforced server-side.
+// ────────────────────────────────────────────────────────────────────────────
+
+import 'package:cloud_functions/cloud_functions.dart';
 import '../models/idea_model.dart';
+import '../services/rate_limiter.dart';
+import '../utils/input_validator.dart';
+
+// ── Typed result ──────────────────────────────────────────────────────────────
+
+enum ClaudeErrorKind { rateLimitedLocally, rateLimitedByApi, networkError, unknown }
+
+class ClaudeResult<T> {
+  final T? value;
+  final ClaudeErrorKind? error;
+  final Duration? retryAfter;
+
+  const ClaudeResult.ok(this.value) : error = null, retryAfter = null;
+  const ClaudeResult.err(this.error, {this.retryAfter}) : value = null;
+
+  bool get isOk => error == null;
+}
+
+// ── Service ───────────────────────────────────────────────────────────────────
 
 class ClaudeService {
-  static String get _apiKey => dotenv.env['ANTHROPIC_API_KEY'] ?? '';
-  static const _endpoint = 'https://api.anthropic.com/v1/messages';
-  static const _model = 'claude-sonnet-4-6';
+  // Lazily obtain a reference to the deployed Cloud Function.
+  static HttpsCallable get _fn =>
+      FirebaseFunctions.instance.httpsCallable(
+        'callClaude',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 60)),
+      );
 
-  // ── Generate idea from import signals ────────────────────────────────────
+  // ── Generate idea from import signals ──────────────────────────────────────
 
-  static Future<IdeaModel?> generateIdeaFromSignals({
+  static Future<ClaudeResult<IdeaModel>> generateIdeaFromSignals({
     required List<String> captions,
     required List<String> topics,
     required List<String> creators,
   }) async {
-    final parts = <String>[];
+    // Sanitise client-side before sending (defence in depth — server sanitises
+    // again, but we don't want to send garbage over the network).
+    final safeCaps = captions
+        .map((c) => InputValidator.sanitizeAndTruncate(c, InputValidator.maxCaptionLength))
+        .where((c) => c.isNotEmpty)
+        .take(InputValidator.maxCaptionCount)
+        .toList();
 
-    final caps = captions.where((c) => c.trim().isNotEmpty).toList();
-    if (caps.isNotEmpty) {
-      parts.add(
-          'VOICE SAMPLES — real captions written by this creator. Study their sentence rhythm, vocabulary, phrasing habits, and emotional tone. The script bullets must sound like this person, not like a generic AI:\n'
-          '${caps.map((c) => '- $c').join('\n')}');
-    }
+    final safeTopics = topics
+        .map((t) => InputValidator.sanitizeAndTruncate(t, InputValidator.maxTopicLength))
+        .where((t) => t.isNotEmpty)
+        .take(InputValidator.maxTopicCount)
+        .toList();
 
-    if (topics.isNotEmpty) {
-      parts.add('Topics they create content around: ${topics.join(', ')}');
-    }
+    final safeCreators = creators
+        .map((c) => InputValidator.sanitizeAndTruncate(c, InputValidator.maxCreatorNameLength))
+        .where((c) => c.isNotEmpty)
+        .take(InputValidator.maxCreatorCount)
+        .toList();
 
-    if (creators.isNotEmpty) {
-      parts.add(
-          'Creators they follow for inspiration: ${creators.join(', ')}');
-    }
-
-    if (parts.isEmpty) return null;
-
-    final prompt = '''You are a content strategy AI helping a short-form video creator develop their next short-form video idea.
-
-${parts.join('\n\n')}
-
-Using the signals above, generate ONE compelling video idea. Follow these rules strictly:
-
-1. CONTENT FORMAT — Choose whichever format fits the signals best. Do NOT default to finance or tips unless the signals clearly point there. Formats to consider:
-   - Day in the life / vlog-style
-   - Storytime or personal experience
-   - Hot take or opinion
-   - Behind the scenes
-   - Tutorial or how-to
-   - "Things I wish I knew" reflection
-   - Reaction or response to a trend
-   - Routine or habit breakdown
-
-2. CREATOR INSPIRATION — If creators are listed, mirror the style, pacing, and tone those creators are known for.
-
-3. SCRIPT BULLETS — Write 5-6 bullet points that sound like natural spoken lines for short-form video. Each bullet must vary in structure and feel conversational, not like a listicle.
-
-4. VOICE — If voice samples are provided, each script bullet must reflect the creator's actual sentence rhythm, vocabulary, and phrasing. Do not write in a polished or generic AI voice. Write the way those captions sound.
-
-5. AUTHENTICITY — The idea should feel specific and personal to this creator, not generic.
-
-Return ONLY valid JSON — no markdown, no explanation:
-{
-  "title": "a compelling, specific video title that matches the chosen format",
-  "script": "• natural spoken bullet one\\n• natural spoken bullet two\\n• natural spoken bullet three\\n• natural spoken bullet four\\n• natural spoken bullet five"
-}''';
-
-    final raw = await _call(prompt);
-    if (raw == null) return null;
-    return _parseIdea(raw);
+    return _callIdeaFunction({
+      'mode': 'generateFromSignals',
+      'captions': safeCaps,
+      'topics': safeTopics,
+      'creators': safeCreators,
+    });
   }
 
-  // ── Generate idea avoiding existing titles ───────────────────────────────
+  // ── Generate idea avoiding existing ideas ──────────────────────────────────
 
-  static Future<IdeaModel?> generateIdeaAvoidingExisting({
+  static Future<ClaudeResult<IdeaModel>> generateIdeaAvoidingExisting({
     required Map<String, dynamic> signals,
     required List<String> existingSummaries,
     String? extraDirection,
   }) async {
-    final captions = List<String>.from(signals['captions'] ?? []);
-    final topics = List<String>.from(signals['topics'] ?? []);
-    final rawCreators = List<dynamic>.from(signals['creators'] ?? []);
+    final captions = List<String>.from(signals['captions'] ?? [])
+        .map((c) => InputValidator.sanitizeAndTruncate(c, InputValidator.maxCaptionLength))
+        .where((c) => c.isNotEmpty)
+        .take(InputValidator.maxCaptionCount)
+        .toList();
 
-    final parts = <String>[];
-    if (captions.isNotEmpty) {
-      parts.add(
-          'VOICE SAMPLES — real captions written by this creator. Study their sentence rhythm, vocabulary, phrasing habits, and emotional tone. The script bullets must sound like this person, not like a generic AI:\n'
-          '${captions.map((c) => '- $c').join('\n')}');
-    }
-    if (topics.isNotEmpty) {
-      parts.add('Topics they create content around: ${topics.join(', ')}');
-    }
-    if (rawCreators.isNotEmpty) {
-      parts.add('Creators they follow for inspiration:\n${_buildCreatorLines(rawCreators)}');
-    }
-    if (extraDirection != null && extraDirection.trim().isNotEmpty) {
-      parts.add('Additional direction from the creator: ${extraDirection.trim()}');
-    }
-    if (parts.isEmpty) return null;
+    final topics = List<String>.from(signals['topics'] ?? [])
+        .map((t) => InputValidator.sanitizeAndTruncate(t, InputValidator.maxTopicLength))
+        .where((t) => t.isNotEmpty)
+        .take(InputValidator.maxTopicCount)
+        .toList();
 
-    final avoidSection = existingSummaries.isNotEmpty
-        ? '\n\nIDEAS TO AVOID — the creator already has every one of these. Do NOT generate an idea that shares the same format, topic angle, opening emotion, key message, or talking-point structure as any entry below. Each entry shows "title — first talking point" so you can see the exact angle used:\n${existingSummaries.map((s) => '- $s').join('\n')}\n\nIf you find yourself writing something that resembles any entry above — even loosely — stop and choose a completely different format, angle, and emotional entry point.'
-        : '';
+    // Creators may be String or Map — pass as-is; server normalises both forms.
+    final rawCreators = List<dynamic>.from(signals['creators'] ?? [])
+        .take(InputValidator.maxCreatorCount)
+        .toList();
 
-    final prompt =
-        '''You are a content strategy AI helping a short-form video creator develop their next short-form video idea.
+    final safeDirection = extraDirection != null
+        ? InputValidator.sanitizeAndTruncate(extraDirection, InputValidator.maxExtraDirectionLength)
+        : null;
 
-${parts.join('\n\n')}
-$avoidSection
-
-Using the signals above, generate ONE compelling video idea. Follow these rules strictly:
-
-1. NO OVERLAP — Cross-check your idea against every entry in the avoid list before finalising. If your title, format, opening hook, or core message resembles any of them — even from a different angle — reject it and start over with a genuinely different concept.
-
-2. CONTENT FORMAT — Look at the formats already used in the avoid list and deliberately choose a DIFFERENT one. Rotate through:
-   - Day in the life / vlog-style
-   - Storytime or personal experience
-   - Hot take or unpopular opinion
-   - Behind the scenes
-   - Tutorial or how-to
-   - "Things I wish I knew" reflection
-   - Reaction or response to a trend
-   - Routine or habit breakdown
-   - Challenge or experiment
-   - Q&A or myth-busting
-
-3. ANGLE — Even if the topic overlaps with an existing idea, the angle must be fresh: a different perspective, emotion, audience, or moment in time.
-
-4. CREATOR INSPIRATION — If creators are listed with style descriptions, use those descriptions directly to shape tone, pacing, and hook structure.
-
-5. SCRIPT BULLETS — Write 5-6 bullet points that sound like natural spoken lines for short-form video. Conversational, varied in structure, not a listicle.
-
-6. VOICE — If voice samples are provided, each script bullet must mirror the creator's actual sentence rhythm, vocabulary, and phrasing from those samples. Do not write in a polished or generic AI voice — write the way those captions sound.
-
-7. AUTHENTICITY — Specific and personal to this creator. Avoid generic hooks like "Here are X tips" unless the signals strongly call for it.
-
-Return ONLY valid JSON — no markdown, no explanation:
-{
-  "title": "a compelling, specific video title that matches the chosen format",
-  "script": "• natural spoken bullet one\\n• natural spoken bullet two\\n• natural spoken bullet three\\n• natural spoken bullet four\\n• natural spoken bullet five"
-}''';
-
-    final raw = await _call(prompt);
-    if (raw == null) return null;
-    return _parseIdea(raw);
+    return _callIdeaFunction({
+      'mode': 'generateAvoidingExisting',
+      'captions': captions,
+      'topics': topics,
+      'creators': rawCreators,
+      'existingSummaries': existingSummaries
+          .map((s) => InputValidator.sanitizeAndTruncate(s, 300))
+          .take(50)
+          .toList(),
+      if (safeDirection != null && safeDirection.isNotEmpty)
+        'extraDirection': safeDirection,
+    });
   }
 
-  // ── AI assist — elaborate on existing title and script ───────────────────
+  // ── AI assist ──────────────────────────────────────────────────────────────
 
   static Future<String?> assistWithScript({
     required String title,
     required String currentScript,
     Map<String, dynamic>? signals,
   }) async {
-    final captions =
-        List<String>.from(signals?['captions'] ?? []);
-    final topics = List<String>.from(signals?['topics'] ?? []);
-    final rawCreators =
-        List<dynamic>.from(signals?['creators'] ?? []);
+    final captions = List<String>.from(signals?['captions'] ?? [])
+        .map((c) => InputValidator.sanitizeAndTruncate(c, InputValidator.maxCaptionLength))
+        .where((c) => c.isNotEmpty)
+        .take(3)
+        .toList();
 
-    final contextParts = <String>[];
-    if (topics.isNotEmpty) {
-      contextParts.add('Creator topics: ${topics.join(', ')}');
-    }
-    if (rawCreators.isNotEmpty) {
-      contextParts.add(
-          'Creator inspirations:\n${_buildCreatorLines(rawCreators)}');
-    }
-    if (captions.isNotEmpty) {
-      contextParts.add(
-          'VOICE SAMPLES — real captions written by this creator. Every bullet you write must match their sentence rhythm, vocabulary, phrasing habits, and emotional tone. Do not default to generic AI phrasing:\n${captions.take(3).map((c) => '- $c').join('\n')}');
-    }
+    final topics = List<String>.from(signals?['topics'] ?? [])
+        .map((t) => InputValidator.sanitizeAndTruncate(t, InputValidator.maxTopicLength))
+        .where((t) => t.isNotEmpty)
+        .take(InputValidator.maxTopicCount)
+        .toList();
 
-    final hasScript = currentScript.trim().isNotEmpty;
-    final scriptSection = hasScript
-        ? 'Existing bullet points already written:\n$currentScript\n\nAdd 2-3 more bullet points that elaborate on or continue from the existing ones. Do NOT repeat anything already written.'
-        : 'No bullet points written yet. Generate 5-6 bullet points for this title.';
+    final rawCreators = List<dynamic>.from(signals?['creators'] ?? [])
+        .take(InputValidator.maxCreatorCount)
+        .toList();
 
-    final contextSection = contextParts.isNotEmpty
-        ? '\n\nCreator background context:\n${contextParts.join('\n')}'
-        : '';
+    final result = await _callTextFunction({
+      'mode': 'assistScript',
+      'title': InputValidator.sanitizeAndTruncate(title, 200),
+      'currentScript': InputValidator.sanitizeAndTruncate(currentScript, 10000),
+      'captions': captions,
+      'topics': topics,
+      'creators': rawCreators,
+    });
 
-    final prompt =
-        '''You are helping a content creator write natural, spoken bullet points for a short-form video.
-
-Video title: "$title"
-$scriptSection$contextSection
-
-Rules:
-- Read the title carefully and match its format (storytime, day-in-life, opinion, tutorial, etc.)
-- If voice samples are provided above, write bullets that sound like those captions — same rhythm, same vocabulary level, same emotional register. Do not ignore them.
-- Write bullets that sound like something the creator would actually say out loud, not a blog post or listicle
-- Keep each bullet concise — one spoken thought, not a paragraph
-- Vary the sentence structure; don't start every bullet the same way
-- Do NOT default to finance or generic productivity tips unless the title clearly calls for it
-- Match the energy and tone the title implies (casual, reflective, hype, etc.)
-
-Return ONLY the bullet points, one per line, each starting with "• ". No title, no explanation, no JSON — just the bullet points.''';
-
-    return _call(prompt);
+    return result.value;
   }
 
-  // ── Generate idea from previously saved Firestore signals ────────────────
+  // ── Generate idea with saved signals ──────────────────────────────────────
 
-  static Future<IdeaModel?> generateIdeaWithSavedSignals({
+  static Future<ClaudeResult<IdeaModel>> generateIdeaWithSavedSignals({
     required Map<String, dynamic> signals,
     String? extraDirection,
   }) async {
-    final captions = List<String>.from(signals['captions'] ?? []);
-    final topics = List<String>.from(signals['topics'] ?? []);
-    final rawCreators = List<dynamic>.from(signals['creators'] ?? []);
-
-    final parts = <String>[];
-    if (captions.isNotEmpty) {
-      parts.add(
-          'VOICE SAMPLES — real captions written by this creator. Study their sentence rhythm, vocabulary, phrasing habits, and emotional tone. The script bullets must sound like this person, not like a generic AI:\n'
-          '${captions.map((c) => '- $c').join('\n')}');
-    }
-    if (topics.isNotEmpty) {
-      parts.add('Topics they create content around: ${topics.join(', ')}');
-    }
-    if (rawCreators.isNotEmpty) {
-      parts.add('Creators they follow for inspiration:\n${_buildCreatorLines(rawCreators)}');
-    }
-    if (extraDirection != null && extraDirection.trim().isNotEmpty) {
-      parts.add('Additional direction from the creator: ${extraDirection.trim()}');
-    }
-    if (parts.isEmpty) return null;
-
-    final prompt = '''You are a content strategy AI helping a short-form video creator develop their next short-form video idea.
-
-${parts.join('\n\n')}
-
-Using the signals above, generate ONE compelling video idea. Follow these rules strictly:
-
-1. CONTENT FORMAT — Choose whichever format fits the signals best. Do NOT default to finance or tips unless the signals clearly point there. Formats to consider:
-   - Day in the life / vlog-style
-   - Storytime or personal experience
-   - Hot take or opinion
-   - Behind the scenes
-   - Tutorial or how-to
-   - "Things I wish I knew" reflection
-   - Reaction or response to a trend
-   - Routine or habit breakdown
-
-2. CREATOR INSPIRATION — If creators are listed, mirror the style, pacing, and tone those creators are known for.
-
-3. SCRIPT BULLETS — Write 5-6 bullet points that sound like natural spoken lines for short-form video. Each bullet must vary in structure and feel conversational, not like a listicle.
-
-4. VOICE — If voice samples are provided, each script bullet must reflect the creator's actual sentence rhythm, vocabulary, and phrasing. Do not write in a polished or generic AI voice. Write the way those captions sound.
-
-5. AUTHENTICITY — The idea should feel specific and personal to this creator, not generic.
-
-Return ONLY valid JSON — no markdown, no explanation:
-{
-  "title": "a compelling, specific video title that matches the chosen format",
-  "script": "• natural spoken bullet one\\n• natural spoken bullet two\\n• natural spoken bullet three\\n• natural spoken bullet four\\n• natural spoken bullet five"
-}''';
-
-    final raw = await _call(prompt);
-    if (raw == null) return null;
-    return _parseIdea(raw);
+    return generateIdeaAvoidingExisting(
+      signals: signals,
+      existingSummaries: const [],
+      extraDirection: extraDirection,
+    );
   }
 
-  // ── Predict best next move from existing drafted ideas ───────────────────
+  // ── Predict next move ──────────────────────────────────────────────────────
 
   static Future<String?> predictNextMove(List<IdeaModel> ideas) async {
     if (ideas.isEmpty) return null;
 
-    final ideaList = ideas.take(10).map((i) {
+    final summaries = ideas.take(10).map((i) {
       final preview = i.script.isNotEmpty
           ? i.script.substring(0, i.script.length.clamp(0, 120))
           : '';
-      return '- "${i.title}" [${i.status}]${preview.isNotEmpty ? ': $preview...' : ''}';
-    }).join('\n');
+      return '"${i.title}" [${i.status}]${preview.isNotEmpty ? ': $preview...' : ''}';
+    }).toList();
 
-    final prompt =
-        '''You are a content strategy AI helping a short-form video creator figure out their next move.
+    final result = await _callTextFunction({
+      'mode': 'assistScript',
+      'title': 'PREDICT_NEXT_MOVE',
+      'currentScript': summaries.join('\n'),
+      'captions': <String>[],
+      'topics': <String>[],
+      'creators': <dynamic>[],
+    });
 
-Here are the video ideas this creator has drafted so far:
-
-$ideaList
-
-Based on the patterns, topics, and gaps you notice, write a 2-3 sentence recommendation for their single best next content move. Be specific and actionable. Do not use bullet points or headers — flowing sentences only.''';
-
-    return _call(prompt);
+    return result.value;
   }
 
-  // ── Format creator list from signals (handles old string + new map format) ─
+  // ── Shared call helpers ────────────────────────────────────────────────────
 
-  static String _buildCreatorLines(List<dynamic> raw) {
-    return raw.map((c) {
-      if (c is String) return '- $c';
-      if (c is Map) {
-        final name = (c['name'] ?? '').toString().trim();
-        final style = (c['style'] ?? '').toString().trim();
-        if (name.isEmpty) return '';
-        return style.isNotEmpty ? '- $name: $style' : '- $name';
-      }
-      return '- ${c.toString()}';
-    }).where((s) => s.isNotEmpty).join('\n');
-  }
-
-  // ── Shared HTTP call ─────────────────────────────────────────────────────
-
-  static Future<String?> _call(String userMessage) async {
-    try {
-      final res = await http.post(
-        Uri.parse(_endpoint),
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': _apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: jsonEncode({
-          'model': _model,
-          'max_tokens': 1024,
-          'messages': [
-            {'role': 'user', 'content': userMessage},
-          ],
-        }),
+  /// Call the function and expect an IdeaModel in the response.
+  static Future<ClaudeResult<IdeaModel>> _callIdeaFunction(
+      Map<String, dynamic> payload) async {
+    final rl = RateLimiter.instance.checkClaudeApi();
+    if (!rl.allowed) {
+      return ClaudeResult.err(
+        ClaudeErrorKind.rateLimitedLocally,
+        retryAfter: rl.retryAfter,
       );
-      if (res.statusCode != 200) return null;
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      return (data['content'] as List).first['text'] as String;
+    }
+    try {
+      final result = await _fn.call(payload);
+      final data = result.data as Map<dynamic, dynamic>;
+      final idea = IdeaModel(
+        title: data['title'] as String,
+        script: data['script'] as String,
+        isAIGenerated: true,
+      );
+      return ClaudeResult.ok(idea);
+    } on FirebaseFunctionsException catch (e) {
+      return ClaudeResult.err(_mapFnError(e.code));
     } catch (_) {
-      return null;
+      return const ClaudeResult.err(ClaudeErrorKind.networkError);
     }
   }
 
-  static IdeaModel? _parseIdea(String raw) {
-    try {
-      // Strip any accidental markdown code fences
-      final cleaned =
-          raw.replaceAll('```json', '').replaceAll('```', '').trim();
-      final json = jsonDecode(cleaned) as Map<String, dynamic>;
-      return IdeaModel(
-        title: json['title'] as String,
-        script: json['script'] as String,
-        isAIGenerated: true,
+  /// Call the function and expect a plain text string in the response.
+  static Future<ClaudeResult<String>> _callTextFunction(
+      Map<String, dynamic> payload) async {
+    final rl = RateLimiter.instance.checkClaudeApi();
+    if (!rl.allowed) {
+      return ClaudeResult.err(
+        ClaudeErrorKind.rateLimitedLocally,
+        retryAfter: rl.retryAfter,
       );
+    }
+    try {
+      final result = await _fn.call(payload);
+      final data = result.data as Map<dynamic, dynamic>;
+      return ClaudeResult.ok(data['text'] as String?);
+    } on FirebaseFunctionsException catch (e) {
+      return ClaudeResult.err(_mapFnError(e.code));
     } catch (_) {
-      return null;
+      return const ClaudeResult.err(ClaudeErrorKind.networkError);
+    }
+  }
+
+  static ClaudeErrorKind _mapFnError(String code) {
+    switch (code) {
+      case 'resource-exhausted':
+        return ClaudeErrorKind.rateLimitedByApi;
+      case 'unauthenticated':
+      case 'permission-denied':
+        return ClaudeErrorKind.unknown;
+      default:
+        return ClaudeErrorKind.networkError;
     }
   }
 }

@@ -291,28 +291,4 @@ class ConnectScreen extends StatelessWidget {
     );
   }
 
-  Widget _secondaryBtn(BuildContext context, IconData icon, String label, String route) {
-    return GestureDetector(
-      onTap: () => Navigator.pushReplacementNamed(context, route),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          color: const Color(0xB8FFFFFF),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0x140F172A)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: kText, size: 16),
-            const SizedBox(width: 8),
-            Text(label,
-                style: GoogleFonts.manrope(
-                    fontSize: 14, fontWeight: FontWeight.w800, color: kText)),
-          ],
-        ),
-      ),
-    );
-  }
 }

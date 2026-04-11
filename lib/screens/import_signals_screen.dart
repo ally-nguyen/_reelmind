@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart';
 import '../app_theme.dart';
 import '../services/firestore_service.dart';
+import '../utils/input_validator.dart';
 import '../widgets/app_background.dart';
 import '../widgets/glass_card.dart';
 
@@ -19,16 +21,19 @@ class _VideoEntry {
   final TextEditingController notesCtrl;
   final String? url;
   final String? storagePath;
+  String? localFilePath;
 
   _VideoEntry({
     String name = '',
     String notes = '',
     this.url,
     this.storagePath,
+    this.localFilePath,
   })  : nameCtrl = TextEditingController(text: name),
         notesCtrl = TextEditingController(text: notes);
 
   bool get isUploaded => url != null && url!.isNotEmpty;
+  bool get hasLocalFile => localFilePath != null && localFilePath!.isNotEmpty;
 
   void dispose() {
     nameCtrl.dispose();
@@ -116,11 +121,13 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
           if (v is Map) {
             final urlVal = (v['url'] ?? '').toString();
             final pathVal = (v['storagePath'] ?? '').toString();
+            final localVal = (v['localFilePath'] ?? '').toString();
             _videos.add(_VideoEntry(
               name: (v['name'] ?? '').toString(),
               notes: (v['notes'] ?? '').toString(),
               url: urlVal.isEmpty ? null : urlVal,
               storagePath: pathVal.isEmpty ? null : pathVal,
+              localFilePath: localVal.isEmpty ? null : localVal,
             ));
           }
         }
@@ -162,17 +169,50 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
   void _addCustomTopic() {
     final topic = _customTopicCtrl.text.trim();
     if (topic.isEmpty) return;
+
+    // SECURITY (OWASP A03): validate length before adding to state.
+    final err = InputValidator.validateTopic(topic);
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      return;
+    }
+    if (_selectedTopics.length >= InputValidator.maxTopicCount) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Maximum topics reached.')),
+      );
+      return;
+    }
+
+    final sanitized = InputValidator.sanitizeText(topic);
     setState(() {
-      _selectedTopics.add(topic);
+      _selectedTopics.add(sanitized);
       _customTopicCtrl.clear();
     });
   }
 
   void _addCreator() {
     final name = _creatorCtrl.text.trim();
-    if (name.isEmpty || _creators.any((c) => c.name == name)) return;
+    if (name.isEmpty) return;
+
+    // SECURITY: validate before adding.
+    final err = InputValidator.validateCreatorName(name);
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      return;
+    }
+    if (_creators.length >= InputValidator.maxCreatorCount) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Maximum creators reached.')),
+      );
+      return;
+    }
+
+    final sanitized = InputValidator.sanitizeText(name);
+    // Case-insensitive duplicate check to prevent near-identical entries.
+    if (_creators.any((c) => c.name.toLowerCase() == sanitized.toLowerCase())) return;
+
     setState(() {
-      _creators.add(_CreatorEntry(name: name));
+      _creators.add(_CreatorEntry(name: sanitized));
       _creatorCtrl.clear();
     });
   }
@@ -186,20 +226,57 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
 
   Future<void> _analyze() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    final captions = _captionCtrls
-        .map((c) => c.text)
-        .where((t) => t.trim().isNotEmpty)
+
+    // ── SECURITY (OWASP A03): validate and sanitise all user inputs ──────────
+    // Captions — limit count, validate length, sanitise.
+    final rawCaptions = _captionCtrls
+        .map((c) => InputValidator.sanitizeText(c.text.trim()))
+        .where((t) => t.isNotEmpty)
+        .take(InputValidator.maxCaptionCount)
         .toList();
-    final topics = _selectedTopics.toList();
+
+    for (final cap in rawCaptions) {
+      if (cap.length > InputValidator.maxCaptionLength) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Each caption must be ${InputValidator.maxCaptionLength} characters or fewer.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+    final captions = rawCaptions;
+
+    // Topics — already validated on entry, re-sanitise just in case.
+    final topics = _selectedTopics
+        .map((t) => InputValidator.sanitizeAndTruncate(t, InputValidator.maxTopicLength))
+        .take(InputValidator.maxTopicCount)
+        .toList();
+
+    // Creators — sanitise name and style.
     final creatorMaps = _creators
-        .map((e) => {'name': e.name, 'style': e.styleCtrl.text.trim()})
+        .take(InputValidator.maxCreatorCount)
+        .map((e) => {
+              'name': InputValidator.sanitizeAndTruncate(
+                e.name, InputValidator.maxCreatorNameLength),
+              'style': InputValidator.sanitizeAndTruncate(
+                e.styleCtrl.text.trim(), InputValidator.maxCreatorStyleLength),
+            })
         .toList();
+
+    // Videos — sanitise name and notes.
     final videoMaps = _videos
+        .take(InputValidator.maxVideoCount)
         .map((v) => {
-              'name': v.nameCtrl.text.trim(),
-              'notes': v.notesCtrl.text.trim(),
+              'name': InputValidator.sanitizeAndTruncate(
+                v.nameCtrl.text.trim(), InputValidator.maxVideoNameLength),
+              'notes': InputValidator.sanitizeAndTruncate(
+                v.notesCtrl.text.trim(), InputValidator.maxVideoNotesLength),
               'url': v.url ?? '',
               'storagePath': v.storagePath ?? '',
+              'localFilePath': v.localFilePath ?? '',
             })
         .toList();
 
@@ -394,9 +471,12 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
               canRemove: _captionCtrls.length > 1,
               onRemove: () => _removeCaptionField(i),
               maxLines: 4,
+              // SECURITY: enforce max length in the UI widget.
+              maxLength: InputValidator.maxCaptionLength,
             ),
           )),
-          _addFieldButton(label: 'Add another caption', onTap: _addCaptionField),
+          if (_captionCtrls.length < InputValidator.maxCaptionCount)
+            _addFieldButton(label: 'Add another caption', onTap: _addCaptionField),
         ],
       ),
     );
@@ -471,8 +551,11 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
                   style: GoogleFonts.manrope(
                       fontSize: 14, color: kText),
                   textInputAction: TextInputAction.done,
+                  // SECURITY: enforce max length in UI.
+                  maxLength: InputValidator.maxTopicLength,
                   onSubmitted: (_) => _addCustomTopic(),
                   decoration: InputDecoration(
+                    counterText: '', // hide counter — length enforced silently
                     hintText: 'Add your own topic...',
                     hintStyle: GoogleFonts.manrope(
                         fontSize: 14,
@@ -571,8 +654,11 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
                   style: GoogleFonts.manrope(
                       fontSize: 14, color: kText),
                   textInputAction: TextInputAction.done,
+                  // SECURITY: enforce max length in UI.
+                  maxLength: InputValidator.maxCreatorNameLength,
                   onSubmitted: (_) => _addCreator(),
                   decoration: InputDecoration(
+                    counterText: '',
                     hintText: '@username or creator name...',
                     hintStyle: GoogleFonts.manrope(
                         fontSize: 14,
@@ -670,11 +756,15 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
               ],
             ),
             const SizedBox(height: 10),
+            // SECURITY: creator style descriptions are inserted into AI prompts;
+            // enforce a hard length cap to limit prompt injection surface.
             TextField(
               controller: entry.styleCtrl,
               maxLines: 2,
+              maxLength: InputValidator.maxCreatorStyleLength,
               style: GoogleFonts.manrope(fontSize: 13, color: kText),
               decoration: InputDecoration(
+                counterText: '',
                 hintText:
                     'What do you like about their style? (optional)',
                 hintStyle: GoogleFonts.manrope(
@@ -742,6 +832,20 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
     });
   }
 
+  Future<void> _pickVideo(int index) async {
+    final picker = ImagePicker();
+    final picked = await picker.pickVideo(source: ImageSource.gallery);
+    if (picked == null) return;
+
+    final entry = _videos[index];
+    final fileName = picked.path.split('/').last;
+    entry.localFilePath = picked.path;
+    if (entry.nameCtrl.text.isEmpty) {
+      entry.nameCtrl.text = fileName;
+    }
+    setState(() {});
+  }
+
   Widget _videoRow(int index) {
     final entry = _videos[index];
     return Container(
@@ -786,12 +890,14 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
                       )
                     : TextField(
                         controller: entry.nameCtrl,
+                        maxLength: InputValidator.maxVideoNameLength,
                         style: GoogleFonts.manrope(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
                             color: kText),
                         decoration: InputDecoration(
-                          hintText: 'Video name or filename...',
+                          counterText: '',
+                          hintText: 'Video name',
                           hintStyle: GoogleFonts.manrope(
                               fontSize: 13,
                               fontWeight: FontWeight.w500,
@@ -829,11 +935,14 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
             ],
           ),
           const SizedBox(height: 8),
+          // SECURITY: video notes are stored in Firestore; cap length.
           TextField(
             controller: entry.notesCtrl,
             maxLines: 2,
+            maxLength: InputValidator.maxVideoNotesLength,
             style: GoogleFonts.manrope(fontSize: 13, color: kText),
             decoration: InputDecoration(
+              counterText: '',
               hintText:
                   'Style notes: framing, pacing, mood, color palette... (optional)',
               hintStyle: GoogleFonts.manrope(
@@ -855,6 +964,73 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
               isDense: true,
             ),
           ),
+          const SizedBox(height: 10),
+          if (entry.hasLocalFile) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: kTeal.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kTeal.withValues(alpha: 0.25)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_outline_rounded,
+                      size: 14, color: kTeal),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      entry.localFilePath!.split('/').last,
+                      style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: kTeal),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => _pickVideo(index),
+                    child: Text(
+                      'Change',
+                      style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: kTeal),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else if (!entry.isUploaded) ...[
+            GestureDetector(
+              onTap: () => _pickVideo(index),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0x0A0F172A),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: const Color(0x200F172A), width: 1),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.video_library_outlined,
+                        size: 16, color: kMuted),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Upload from camera roll',
+                      style: GoogleFonts.manrope(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: kMuted),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -869,6 +1045,7 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
     required VoidCallback onRemove,
     TextInputType keyboardType = TextInputType.text,
     int maxLines = 1,
+    int? maxLength,
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -895,8 +1072,10 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
             controller: controller,
             keyboardType: keyboardType,
             maxLines: maxLines,
+            maxLength: maxLength,
             style: GoogleFonts.manrope(fontSize: 14, color: kText),
             decoration: InputDecoration(
+              counterText: '', // hide character counter — enforced silently
               hintText: hint,
               hintStyle: GoogleFonts.manrope(
                   fontSize: 13,

@@ -7,12 +7,17 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:465090294201:android:1b5ce44958862e292fc668",
+        "mobilesdk_app_id": "1:465090294201:android:2d6c4c7574a59b3d2fc668",
         "android_client_info": {
-          "package_name": "com.example.reel_mind"
+          "package_name": "com.allynguyen.reelmind"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "465090294201-ofkk36p9l58u9s98tuj27cd7go9ps2d4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCkYI5_JdOEA4MXPoB2WPyhtGYEUagGP6E"
@@ -20,7 +25,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "465090294201-ofkk36p9l58u9s98tuj27cd7go9ps2d4.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "465090294201-skaucu4devuvftsvaneqf9k5d4o41m19.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.reelMind"
+              }
+            }
+          ]
         }
       }
     }

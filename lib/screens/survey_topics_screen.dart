@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
 import '../services/firestore_service.dart';
+import '../utils/input_validator.dart';
 import '../widgets/app_background.dart';
 import '../widgets/auth_helpers.dart';
 import 'survey_captions_screen.dart';
@@ -58,8 +59,21 @@ class _SurveyTopicsScreenState extends State<SurveyTopicsScreen> {
   void _addCustomTopic() {
     final topic = _customTopicCtrl.text.trim();
     if (topic.isEmpty) return;
+
+    // SECURITY: validate length and sanitise before adding.
+    final err = InputValidator.validateTopic(topic);
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      return;
+    }
+    if (_selectedTopics.length >= InputValidator.maxTopicCount) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Maximum topics reached.')),
+      );
+      return;
+    }
     setState(() {
-      _selectedTopics.add(topic);
+      _selectedTopics.add(InputValidator.sanitizeText(topic));
       _customTopicCtrl.clear();
     });
   }
@@ -68,7 +82,12 @@ class _SurveyTopicsScreenState extends State<SurveyTopicsScreen> {
     setState(() => _isSaving = true);
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
-      await FirestoreService.saveSurveyTopics(uid, _selectedTopics.toList());
+      // Sanitise preset + custom topics before saving to Firestore.
+      final safeTopics = _selectedTopics
+          .map((t) => InputValidator.sanitizeAndTruncate(t, InputValidator.maxTopicLength))
+          .take(InputValidator.maxTopicCount)
+          .toList();
+      await FirestoreService.saveSurveyTopics(uid, safeTopics);
     }
     if (!mounted) return;
     setState(() => _isSaving = false);
@@ -195,9 +214,12 @@ class _SurveyTopicsScreenState extends State<SurveyTopicsScreen> {
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
                             color: kText),
+                        // SECURITY: enforce max length in UI widget.
+                        maxLength: InputValidator.maxTopicLength,
                         textInputAction: TextInputAction.done,
                         onSubmitted: (_) => _addCustomTopic(),
                         decoration: InputDecoration(
+                          counterText: '',
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
                           focusedBorder: InputBorder.none,

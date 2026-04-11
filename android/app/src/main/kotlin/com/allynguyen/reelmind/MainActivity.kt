@@ -1,4 +1,4 @@
-package com.example.reel_mind
+package com.allynguyen.reelmind
 
 import io.flutter.embedding.android.FlutterActivity
 

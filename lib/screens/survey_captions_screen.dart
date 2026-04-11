@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
 import '../services/firestore_service.dart';
+import '../utils/input_validator.dart';
 import '../widgets/app_background.dart';
 import '../widgets/auth_helpers.dart';
 import 'survey_creators_screen.dart';
@@ -43,9 +44,12 @@ class _SurveyCaptionsScreenState extends State<SurveyCaptionsScreen> {
     setState(() => _isSaving = true);
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
+      // SECURITY (OWASP A03): sanitise and enforce limits before Firestore write.
       final captions = _captionCtrls
-          .map((c) => c.text.trim())
+          .map((c) => InputValidator.sanitizeAndTruncate(
+                c.text.trim(), InputValidator.maxCaptionLength))
           .where((t) => t.isNotEmpty)
+          .take(InputValidator.maxCaptionCount)
           .toList();
       await FirestoreService.saveSurveyCaptions(uid, captions);
     }
@@ -155,9 +159,11 @@ class _SurveyCaptionsScreenState extends State<SurveyCaptionsScreen> {
               const SizedBox(width: 12),
             ],
           ),
+          // SECURITY: enforce caption length in the UI widget.
           TextField(
             controller: _captionCtrls[i],
             maxLines: 4,
+            maxLength: InputValidator.maxCaptionLength,
             style: GoogleFonts.manrope(
               fontSize: 15,
               fontWeight: FontWeight.w600,
@@ -165,6 +171,7 @@ class _SurveyCaptionsScreenState extends State<SurveyCaptionsScreen> {
               height: 1.5,
             ),
             decoration: InputDecoration(
+              counterText: '',
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,

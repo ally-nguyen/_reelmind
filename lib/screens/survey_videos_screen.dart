@@ -6,6 +6,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import '../app_theme.dart';
 import '../services/firestore_service.dart';
+import '../utils/input_validator.dart';
 import '../widgets/app_background.dart';
 import '../widgets/auth_helpers.dart';
 
@@ -131,10 +132,14 @@ class _SurveyVideosScreenState extends State<SurveyVideosScreen> {
     setState(() => _isSaving = true);
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
+      // SECURITY (OWASP A03): sanitise text fields before Firestore write.
       final maps = _videos
+          .take(InputValidator.maxVideoCount)
           .map((v) => {
-                'name': v.nameCtrl.text.trim(),
-                'notes': v.notesCtrl.text.trim(),
+                'name': InputValidator.sanitizeAndTruncate(
+                  v.nameCtrl.text.trim(), InputValidator.maxVideoNameLength),
+                'notes': InputValidator.sanitizeAndTruncate(
+                  v.notesCtrl.text.trim(), InputValidator.maxVideoNotesLength),
                 'url': v.url ?? '',
                 'storagePath': v.storagePath ?? '',
               })

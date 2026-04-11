@@ -6,6 +6,7 @@ import '../app_theme.dart';
 import '../models/idea_model.dart';
 import '../services/claude_service.dart';
 import '../services/firestore_service.dart';
+import '../utils/input_validator.dart';
 import '../widgets/app_background.dart';
 import '../widgets/app_tab_bar.dart';
 import '../widgets/glass_card.dart';
@@ -187,11 +188,16 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     final uid = _uid;
     if (uid == null || _titleCtrl.text.trim().isEmpty) return;
     setState(() => _saveState = _SaveState.saving);
+
+    // SECURITY (OWASP A03): sanitise before persisting to Firestore.
+    final safeTitle = InputValidator.sanitizeAndTruncate(_titleCtrl.text.trim(), 200);
+    final safeScript = InputValidator.sanitizeAndTruncate(_scriptCtrl.text, 10000);
+
     try {
       if (_ideaId == null) {
         final idea = IdeaModel(
-          title: _titleCtrl.text.trim(),
-          script: _scriptCtrl.text,
+          title: safeTitle,
+          script: safeScript,
           status: _activeStatus,
           tags: _selectedTags,
           isAIGenerated: widget.idea?.isAIGenerated ?? false,
@@ -199,8 +205,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         _ideaId = await FirestoreService.addIdea(uid, idea);
       } else {
         await FirestoreService.updateIdea(uid, _ideaId!, {
-          'title': _titleCtrl.text.trim(),
-          'script': _scriptCtrl.text,
+          'title': safeTitle,
+          'script': safeScript,
           'status': _activeStatus,
           'tags': _selectedTags,
         });
@@ -482,11 +488,14 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
             ],
           ),
           const SizedBox(height: 16),
+          // SECURITY: cap title length before it reaches Firestore.
           TextField(
             controller: _titleCtrl,
             maxLines: null,
+            maxLength: 200,
             style: displayTitle(30),
             decoration: InputDecoration(
+              counterText: '',
               border: InputBorder.none,
               isDense: true,
               contentPadding: EdgeInsets.zero,
@@ -546,9 +555,11 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         children: [
           Text('Bullet-point script', style: sectionTitle),
           const SizedBox(height: 16),
+          // SECURITY: cap script length; 10 000 chars ~ 20 bullets with room to spare.
           TextField(
             controller: _scriptCtrl,
             maxLines: null,
+            maxLength: 10000,
             keyboardType: TextInputType.multiline,
             style: GoogleFonts.manrope(
                 fontSize: 14,
@@ -556,6 +567,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                 color: kText,
                 height: 1.75),
             decoration: InputDecoration(
+              counterText: '',
               border: InputBorder.none,
               isDense: true,
               contentPadding: EdgeInsets.zero,

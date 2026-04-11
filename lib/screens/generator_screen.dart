@@ -5,7 +5,9 @@ import '../app_theme.dart';
 import '../models/idea_model.dart';
 import '../services/claude_service.dart';
 import '../services/firestore_service.dart';
+import '../services/rate_limiter.dart';
 import '../services/app_preferences.dart';
+import '../utils/input_validator.dart';
 import '../widgets/app_background.dart';
 import '../widgets/app_tab_bar.dart';
 import '../widgets/glass_card.dart';
@@ -77,19 +79,41 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
 
     final direction = extraDirection ?? widget.extraDirection;
 
-    final idea = await ClaudeService.generateIdeaAvoidingExisting(
+    final result = await ClaudeService.generateIdeaAvoidingExisting(
       signals: signals,
       existingSummaries: existingSummaries,
       extraDirection: direction,
     );
 
     if (!mounted) return;
+
+    // Surface rate-limit and error states with actionable messages.
+    if (!result.isOk) {
+      String msg;
+      if (result.error == ClaudeErrorKind.rateLimitedLocally) {
+        final wait = result.retryAfter != null
+            ? RateLimiter.waitMessage(result.retryAfter!)
+            : 'in a moment';
+        msg = 'Generation limit reached. $wait.';
+      } else if (result.error == ClaudeErrorKind.rateLimitedByApi) {
+        msg = 'Too many requests. Please wait a minute and try again.';
+      } else {
+        msg = 'Could not generate an idea. Check your connection and try again.';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: Colors.red.shade700),
+      );
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    final idea = result.value;
     setState(() {
       _idea = idea;
       _isLoading = false;
     });
 
-    // Auto-navigate to workspace if preload setting is on
+    // Auto-navigate to workspace if preload setting is on.
     if (idea != null && AppPreferences.preloadScripts.value && mounted) {
       Navigator.pushReplacement(
         context,
@@ -142,9 +166,11 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
                       fontWeight: FontWeight.w500,
                       color: kMuted)),
               const SizedBox(height: 20),
+              // SECURITY: maxLength enforced in UI and re-validated before use.
               TextField(
                 controller: promptCtrl,
                 maxLines: 3,
+                maxLength: InputValidator.maxExtraDirectionLength,
                 style: GoogleFonts.manrope(fontSize: 14, color: kText),
                 decoration: InputDecoration(
                   hintText:
@@ -184,10 +210,17 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
                   ),
                   onPressed: () {
                     final direction = promptCtrl.text.trim();
+                    // Validate length before forwarding to the API.
+                    final err = InputValidator.validateExtraDirection(direction);
+                    if (err != null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(err)),
+                      );
+                      return;
+                    }
                     Navigator.pop(context);
                     _loadAndGenerate(
-                        extraDirection:
-                            direction.isEmpty ? null : direction);
+                        extraDirection: direction.isEmpty ? null : direction);
                   },
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,

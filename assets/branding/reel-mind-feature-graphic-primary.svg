@@ -1,0 +1,66 @@
+<svg width="1024" height="500" viewBox="0 0 1024 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="72" y1="40" x2="964" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF4EA"/>
+      <stop offset="0.52" stop-color="#FFE1D4"/>
+      <stop offset="1" stop-color="#F6F2EC"/>
+    </linearGradient>
+    <linearGradient id="hero" x1="612" y1="60" x2="952" y2="446" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF8A72"/>
+      <stop offset="0.56" stop-color="#FF6B57"/>
+      <stop offset="1" stop-color="#F25B44"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="679" y1="124" x2="888" y2="347" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF6DD"/>
+      <stop offset="1" stop-color="#F6C76A"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1024" height="500" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="24" flood-color="#152033" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="500" rx="0" fill="url(#bg)"/>
+  <circle cx="143" cy="95" r="108" fill="#FFF7EF" fill-opacity="0.9"/>
+  <circle cx="918" cy="402" r="114" fill="#FFF0E7"/>
+  <circle cx="812" cy="104" r="60" fill="#F6C76A" fill-opacity="0.24"/>
+
+  <g filter="url(#shadow)">
+    <rect x="580" y="58" width="362" height="384" rx="52" fill="url(#hero)"/>
+    <rect x="610" y="96" width="302" height="320" rx="38" fill="#FFF8F2"/>
+    <rect x="699" y="74" width="124" height="26" rx="13" fill="#111318"/>
+
+    <rect x="638" y="126" width="94" height="32" rx="16" fill="#FFE8D8"/>
+    <text x="653" y="147" fill="#F25B44" font-family="Arial, sans-serif" font-size="14" font-weight="700">Generated</text>
+
+    <text x="638" y="192" fill="#152033" font-family="Arial, sans-serif" font-size="32" font-weight="700">How I turn my</text>
+    <text x="638" y="228" fill="#152033" font-family="Arial, sans-serif" font-size="32" font-weight="700">content style into</text>
+    <text x="638" y="264" fill="#152033" font-family="Arial, sans-serif" font-size="32" font-weight="700">better reels</text>
+
+    <rect x="638" y="292" width="246" height="16" rx="8" fill="#FDE6DA"/>
+    <rect x="638" y="322" width="226" height="16" rx="8" fill="#FDE6DA"/>
+    <rect x="638" y="352" width="208" height="16" rx="8" fill="#FDE6DA"/>
+
+    <circle cx="657" cy="302" r="9" fill="#F25B44"/>
+    <circle cx="657" cy="332" r="9" fill="#F25B44"/>
+    <circle cx="657" cy="362" r="9" fill="#F25B44"/>
+
+    <circle cx="761" cy="255" r="84" stroke="url(#accent)" stroke-width="22"/>
+    <circle cx="761" cy="255" r="13" fill="#FFF7E7"/>
+    <circle cx="761" cy="171" r="16" fill="#FFF7E7"/>
+    <circle cx="845" cy="255" r="16" fill="#FFF7E7"/>
+    <circle cx="761" cy="339" r="16" fill="#FFF7E7"/>
+  </g>
+
+  <g>
+    <text x="72" y="128" fill="#F25B44" font-family="Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="3">REEL MIND</text>
+    <text x="72" y="204" fill="#152033" font-family="Georgia, serif" font-size="58" font-weight="700">Turn your</text>
+    <text x="72" y="266" fill="#152033" font-family="Georgia, serif" font-size="58" font-weight="700">content style into</text>
+    <text x="72" y="328" fill="#152033" font-family="Georgia, serif" font-size="58" font-weight="700">your next best video</text>
+
+    <text x="72" y="380" fill="#5E6A7D" font-family="Arial, sans-serif" font-size="22">AI-generated ideas and bullet-point scripts for creators</text>
+    <text x="72" y="410" fill="#5E6A7D" font-family="Arial, sans-serif" font-size="22">who want faster, more on-brand social content planning.</text>
+
+    <rect x="72" y="432" width="190" height="20" rx="10" fill="#152033" fill-opacity="0.08"/>
+    <rect x="278" y="432" width="166" height="20" rx="10" fill="#F6C76A" fill-opacity="0.34"/>
+  </g>
+</svg>

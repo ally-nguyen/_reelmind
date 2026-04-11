@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
 import '../services/app_preferences.dart';
+import '../services/firestore_service.dart';
 import '../widgets/app_background.dart';
 import '../widgets/app_tab_bar.dart';
 import '../widgets/glass_card.dart';
@@ -20,12 +21,9 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen>
     with SingleTickerProviderStateMixin {
-  // ── App Settings state ───────────────────────────────────────────────────
-  bool _autoRefresh = true;
-  bool _preloadScripts = true;
-
   // ── Personal Info state ──────────────────────────────────────────────────
   File? _profileImage;
+  bool _isDeletingAccount = false;
   String get _email =>
       FirebaseAuth.instance.currentUser?.email ?? 'Not signed in';
 
@@ -328,6 +326,46 @@ class _SettingsScreenState extends State<SettingsScreen>
             fabRoute: '/workspace',
             fabIcon: Icons.add,
           ),
+          // Blocking overlay shown while deletion is in progress.
+          if (_isDeletingAccount)
+            Container(
+              color: const Color(0xBBFFFFFF),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 32, vertical: 28),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F4F0),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: const [
+                      BoxShadow(
+                          color: Color(0x22000000),
+                          blurRadius: 32,
+                          offset: Offset(0, 12)),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(
+                          color: Color(0xFFEF4444), strokeWidth: 2.5),
+                      const SizedBox(height: 20),
+                      Text('Deleting your account…',
+                          style: GoogleFonts.manrope(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: kText)),
+                      const SizedBox(height: 6),
+                      Text('This may take a moment.',
+                          style: GoogleFonts.manrope(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: kMuted)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -612,6 +650,381 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
+  // ── Delete account ────────────────────────────────────────────────────────
+
+  /// Step 1 — first confirmation dialog.
+  void _showDeleteAccountDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFF8F4F0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+        title: Text('Delete account?',
+            style: GoogleFonts.fraunces(
+                fontSize: 20, fontWeight: FontWeight.w700, color: kText)),
+        content: Text(
+          'This will permanently delete all your ideas, imported signals, and account data. This cannot be undone.',
+          style: GoogleFonts.manrope(
+              fontSize: 14, fontWeight: FontWeight.w500, color: kMuted,
+              height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel',
+                style: GoogleFonts.manrope(
+                    fontSize: 14, fontWeight: FontWeight.w600, color: kMuted)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              // Step 2 — second confirmation before executing deletion.
+              _showDeleteAccountConfirmDialog();
+            },
+            child: Text('Delete account',
+                style: GoogleFonts.manrope(
+                    fontSize: 14, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Step 2 — final "are you absolutely sure?" dialog before deleting.
+  void _showDeleteAccountConfirmDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFF8F4F0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded,
+                color: Color(0xFFEF4444), size: 22),
+            const SizedBox(width: 10),
+            Text('Are you sure?',
+                style: GoogleFonts.fraunces(
+                    fontSize: 20, fontWeight: FontWeight.w700,
+                    color: const Color(0xFFEF4444))),
+          ],
+        ),
+        content: Text(
+          'All your data — ideas, captions, topics, creator references — will be deleted immediately and cannot be recovered.',
+          style: GoogleFonts.manrope(
+              fontSize: 14, fontWeight: FontWeight.w500, color: kMuted,
+              height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('No, keep my account',
+                style: GoogleFonts.manrope(
+                    fontSize: 14, fontWeight: FontWeight.w600, color: kMuted)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _executeDeleteAccount();
+            },
+            child: Text('Yes, delete everything',
+                style: GoogleFonts.manrope(
+                    fontSize: 14, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Executes deletion.  Handles the re-authentication case where Firebase
+  /// requires a fresh sign-in before deleting the account.
+  Future<void> _executeDeleteAccount() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    setState(() => _isDeletingAccount = true);
+
+    try {
+      // Delete all Firestore data and Storage files first.
+      await FirestoreService.deleteAllUserData(user.uid);
+
+      // Then delete the Firebase Auth account.
+      await user.delete();
+
+      if (!mounted) return;
+      // Navigate to login — auth stream will handle it, but be explicit.
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (_) => false,
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _isDeletingAccount = false);
+
+      if (e.code == 'requires-recent-login') {
+        // Firebase requires re-authentication within 5 minutes of sensitive
+        // operations.  Prompt for password, then retry.
+        _showReauthDialog(user);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not delete account. Please try again.',
+              style: GoogleFonts.manrope(
+                  fontSize: 13, fontWeight: FontWeight.w600)),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
+        ));
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isDeletingAccount = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Something went wrong. Please try again.',
+            style: GoogleFonts.manrope(
+                fontSize: 13, fontWeight: FontWeight.w600)),
+        backgroundColor: const Color(0xFFEF4444),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14)),
+      ));
+    }
+  }
+
+  /// Shows a password prompt to re-authenticate, then retries deletion.
+  void _showReauthDialog(User user) {
+    final passwordCtrl = TextEditingController();
+    bool obscure = true;
+    String? errorMsg;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          backgroundColor: const Color(0xFFF8F4F0),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+          title: Text('Confirm your password',
+              style: GoogleFonts.fraunces(
+                  fontSize: 20, fontWeight: FontWeight.w700, color: kText)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'For security, please enter your password to confirm account deletion.',
+                style: GoogleFonts.manrope(
+                    fontSize: 13, fontWeight: FontWeight.w500, color: kMuted,
+                    height: 1.5),
+              ),
+              const SizedBox(height: 16),
+              if (errorMsg != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFEDED),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline,
+                          color: Color(0xFFEF4444), size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(errorMsg!,
+                            style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFFEF4444))),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              _dialogField(
+                controller: passwordCtrl,
+                label: 'Password',
+                obscure: obscure,
+                onToggle: () => setDlgState(() => obscure = !obscure),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Cancel',
+                  style: GoogleFonts.manrope(
+                      fontSize: 14, fontWeight: FontWeight.w600,
+                      color: kMuted)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFEF4444),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 20, vertical: 10),
+              ),
+              onPressed: () async {
+                if (passwordCtrl.text.isEmpty) {
+                  setDlgState(() => errorMsg = 'Enter your password.');
+                  return;
+                }
+                try {
+                  final credential = EmailAuthProvider.credential(
+                    email: user.email!,
+                    password: passwordCtrl.text,
+                  );
+                  await user.reauthenticateWithCredential(credential);
+                  if (!ctx.mounted) return;
+                  Navigator.pop(ctx);
+                  // Retry deletion now that we're re-authenticated.
+                  _executeDeleteAccount();
+                } on FirebaseAuthException {
+                  setDlgState(
+                      () => errorMsg = 'Incorrect password. Try again.');
+                }
+              },
+              child: Text('Confirm delete',
+                  style: GoogleFonts.manrope(
+                      fontSize: 14, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _manageAccountCard() {
+    return GlassCard(
+      padding: const EdgeInsets.all(18),
+      borderRadius: 26,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Manage Account', style: sectionTitle),
+                    const SizedBox(height: 2),
+                    Text('Deactivate or permanently remove your account.',
+                        style: sectionSubtitle),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          // Deactivate button
+          GestureDetector(
+            onTap: _isDeletingAccount ? null : _showDeactivateDialog,
+            child: Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xB8FFFFFF),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.pause_circle_outline,
+                      color: Color(0xFF64748B), size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Deactivate Account',
+                            style: GoogleFonts.manrope(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: kText)),
+                        const SizedBox(height: 2),
+                        Text('Sign out and pause your account activity.',
+                            style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: kMuted)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right,
+                      color: Color(0xFF94A3B8), size: 18),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Delete button
+          GestureDetector(
+            onTap: _isDeletingAccount ? null : _showDeleteAccountDialog,
+            child: Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0x14EF4444),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.delete_forever_outlined,
+                      color: Color(0xFFEF4444), size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Delete Account',
+                            style: GoogleFonts.manrope(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFEF4444))),
+                        const SizedBox(height: 2),
+                        Text('Permanently delete all your data.',
+                            style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: Color(0xFFEF4444))),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right,
+                      color: Color(0xFFEF4444), size: 18),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _logoutButton() {
     return GestureDetector(
       onTap: () {
@@ -652,11 +1065,11 @@ class _SettingsScreenState extends State<SettingsScreen>
                       horizontal: 20, vertical: 10),
                 ),
                 onPressed: () async {
+                  final navigator = Navigator.of(context);
                   Navigator.pop(ctx);
                   await FirebaseAuth.instance.signOut();
-                  if (!context.mounted) return;
-                  Navigator.pushAndRemoveUntil(
-                    context,
+                  if (!mounted) return;
+                  navigator.pushAndRemoveUntil(
                     MaterialPageRoute(
                         builder: (_) => const LoginScreen()),
                     (_) => false,
@@ -692,7 +1105,7 @@ class _SettingsScreenState extends State<SettingsScreen>
           const SizedBox(height: 16),
           _preferences(),
           const SizedBox(height: 16),
-          _dataSummary(),
+          _manageAccountCard(),
         ],
       ),
     );
@@ -822,89 +1235,51 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  Widget _dataSummary() {
-    return GlassCard(
-      padding: const EdgeInsets.all(18),
-      borderRadius: 26,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Flexible(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Data summary', style: sectionTitle),
-                      const SizedBox(height: 2),
-                      Text('Current cache for this user document.',
-                          style: sectionSubtitle),
-                    ]),
-              ),
-              const SizedBox(width: 12),
-              const RmChip(label: 'Private', style: ChipStyle.brand),
-            ],
+  void _showDeactivateDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFF8F4F0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+        title: Text('Deactivate account?',
+            style: GoogleFonts.fraunces(
+                fontSize: 20, fontWeight: FontWeight.w700, color: kText)),
+        content: Text(
+            'You will be signed out. Your data will be preserved and you can log back in at any time.',
+            style: GoogleFonts.manrope(
+                fontSize: 14, fontWeight: FontWeight.w500, color: kMuted)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel',
+                style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: kMuted)),
           ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xB3FFFFFF),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: const Color(0x0F0F172A)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('IMPORTED ITEMS',
-                          style: GoogleFonts.manrope(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.6,
-                              color: const Color(0xFF94A3B8))),
-                      const SizedBox(height: 8),
-                      Text('128',
-                          style: GoogleFonts.manrope(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w800,
-                              color: kText)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xB3FFFFFF),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: const Color(0x0F0F172A)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('LAST IMPORT',
-                          style: GoogleFonts.manrope(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.6,
-                              color: const Color(0xFF94A3B8))),
-                      const SizedBox(height: 8),
-                      Text('8m',
-                          style: GoogleFonts.manrope(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w800,
-                              color: kText)),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kNavy,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+            onPressed: () async {
+              final navigator = Navigator.of(context);
+              Navigator.pop(ctx);
+              await FirebaseAuth.instance.signOut();
+              if (!mounted) return;
+              navigator.pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                (_) => false,
+              );
+            },
+            child: Text('Deactivate',
+                style: GoogleFonts.manrope(
+                    fontSize: 14, fontWeight: FontWeight.w700)),
           ),
         ],
       ),

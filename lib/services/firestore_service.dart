@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import '../models/idea_model.dart';
 
 class FirestoreService {
@@ -151,5 +152,41 @@ class FirestoreService {
 
   static Future<void> deleteIdea(String uid, String ideaId) async {
     await _ideasRef(uid).doc(ideaId).delete();
+  }
+
+  // ── Account deletion ──────────────────────────────────────────────────────
+
+  /// Permanently deletes all data belonging to [uid]:
+  ///   1. Every document in the ideas subcollection.
+  ///   2. The top-level user document (signals, preferences, rate-limit data).
+  ///   3. All files under Storage path users/{uid}/.
+  ///
+  /// Does NOT delete the Firebase Auth account — the caller must do that
+  /// separately (after re-authentication if required).
+  static Future<void> deleteAllUserData(String uid) async {
+    // 1. Delete all ideas.
+    final ideasSnap = await _ideasRef(uid).get();
+    await Future.wait(ideasSnap.docs.map((d) => d.reference.delete()));
+
+    // 2. Delete the user document.
+    await _db.collection('users').doc(uid).delete();
+
+    // 3. Delete all Storage files under users/{uid}/.
+    //    listAll() is fine here — user-uploaded content is small.
+    try {
+      final storageRef =
+          FirebaseStorage.instance.ref().child('users/$uid');
+      final list = await storageRef.listAll();
+      await Future.wait(list.items.map((item) => item.delete()));
+
+      // Also delete any files in sub-prefixes (e.g. users/{uid}/videos/).
+      await Future.wait(list.prefixes.map((prefix) async {
+        final sub = await prefix.listAll();
+        await Future.wait(sub.items.map((item) => item.delete()));
+      }));
+    } catch (_) {
+      // Storage deletion is best-effort — don't block account deletion if
+      // the folder doesn't exist or a file is already gone.
+    }
   }
 }

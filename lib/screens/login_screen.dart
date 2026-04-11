@@ -1,10 +1,12 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
+import '../services/rate_limiter.dart';
+import '../utils/input_validator.dart';
 import '../widgets/app_background.dart';
 import '../widgets/auth_helpers.dart';
+import '../widgets/reel_mind_logo.dart';
 import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -30,6 +32,21 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _submit() async {
     if (!_formKey.currentState!.validate()) return;
+
+    // SECURITY (OWASP A07): Check client-side rate limit before attempting
+    // sign-in.  Fires before any network call so brute-force attempts are
+    // blocked locally even when Firebase's own lockout hasn't triggered yet.
+    final rl = RateLimiter.instance.checkLogin();
+    if (!rl.allowed) {
+      final wait = rl.retryAfter != null
+          ? RateLimiter.waitMessage(rl.retryAfter!)
+          : 'later';
+      ScaffoldMessenger.of(context).showSnackBar(
+        authSnackBar('Too many attempts. $wait.', isError: true),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       await FirebaseAuth.instance.signInWithEmailAndPassword(
@@ -37,6 +54,9 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _passwordCtrl.text,
       );
       if (!mounted) return;
+      // Reset the login bucket so a user who mis-typed a few times isn't
+      // locked out after a successful login.
+      RateLimiter.instance.onLoginSuccess();
       Navigator.pushNamedAndRemoveUntil(context, '/home', (_) => false);
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
@@ -108,11 +128,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   label: 'Email address',
                   keyboardType: TextInputType.emailAddress,
                   prefixIcon: Icons.email_outlined,
-                  validator: (v) {
-                    if (v == null || v.isEmpty) return 'Enter your email.';
-                    if (!v.contains('@')) return 'Enter a valid email.';
-                    return null;
-                  },
+                  // SECURITY: use centralised regex validator, not just '@' check.
+                  validator: InputValidator.validateEmail,
                 ),
                 const SizedBox(height: 20),
                 SizedBox(
@@ -121,20 +138,36 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: authButtonStyle(),
                     onPressed: () async {
                       if (!resetKey.currentState!.validate()) return;
+                      final navigator = Navigator.of(context);
+                      final messenger = ScaffoldMessenger.of(context);
+                      // SECURITY: rate-limit password reset emails to prevent
+                      // using this endpoint to flood a victim's inbox.
+                      final rl = RateLimiter.instance.checkPasswordReset();
+                      if (!rl.allowed) {
+                        final wait = rl.retryAfter != null
+                            ? RateLimiter.waitMessage(rl.retryAfter!)
+                            : 'later';
+                        if (!context.mounted) return;
+                        navigator.pop();
+                        messenger.showSnackBar(
+                          authSnackBar('Too many requests. $wait.', isError: true),
+                        );
+                        return;
+                      }
                       try {
                         await FirebaseAuth.instance.sendPasswordResetEmail(
                           email: resetCtrl.text.trim(),
                         );
                         if (!context.mounted) return;
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        navigator.pop();
+                        messenger.showSnackBar(
                           authSnackBar(
                               'Reset link sent to ${resetCtrl.text.trim()}'),
                         );
                       } on FirebaseAuthException {
                         if (!context.mounted) return;
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        navigator.pop();
+                        messenger.showSnackBar(
                           authSnackBar(
                               'Could not send reset link. Check the email address.',
                               isError: true),
@@ -201,7 +234,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ],
           ),
           const SizedBox(height: 20),
-          const Center(child: _LogoWithCurvedLabel()),
+          const Center(child: ReelMindLogo(size: 140)),
           const SizedBox(height: 20),
           Text(
             'Log in and pick up right where your next idea left off.',
@@ -242,11 +275,8 @@ class _LoginScreenState extends State<LoginScreen> {
             controller: _emailCtrl,
             keyboardType: TextInputType.emailAddress,
             hint: 'you@example.com',
-            validator: (v) {
-              if (v == null || v.isEmpty) return 'Enter your email.';
-              if (!v.contains('@')) return 'Enter a valid email.';
-              return null;
-            },
+            // SECURITY: centralised RFC 5322 regex, not a bare '@' check.
+            validator: InputValidator.validateEmail,
           ),
           const SizedBox(height: 12),
           protoField(
@@ -386,228 +416,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _secondaryButton({
-    required String label,
-    required IconData icon,
-    required VoidCallback onPressed,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton(
-        style: OutlinedButton.styleFrom(
-          backgroundColor: Color.fromRGBO(255, 255, 255, 0.72),
-          foregroundColor: kText,
-          side: const BorderSide(color: Color(0x140F172A)),
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        ),
-        onPressed: onPressed,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 18),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: GoogleFonts.manrope(
-                  fontSize: 14, fontWeight: FontWeight.w800),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
-// ── Logo with curved "REEL MIND" label ───────────────────────────────────────
 
-class _LogoWithCurvedLabel extends StatelessWidget {
-  const _LogoWithCurvedLabel();
-
-  @override
-  Widget build(BuildContext context) {
-    const logoSize = 140.0;
-    const totalSize = logoSize + 20.0; // extra room for the text arc
-    return SizedBox(
-      width: totalSize,
-      height: totalSize,
-      child: CustomPaint(
-        painter: _CurvedLabelPainter(
-          text: 'REEL MIND',
-          radius: logoSize / 2 + 12,
-        ),
-        child: const Center(child: ReelMindLogo(size: logoSize)),
-      ),
-    );
-  }
-}
-
-class _CurvedLabelPainter extends CustomPainter {
-  final String text;
-  final double radius;
-
-  const _CurvedLabelPainter({required this.text, required this.radius});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-
-    final style = GoogleFonts.manrope(
-      fontSize: 11,
-      fontWeight: FontWeight.w800,
-      letterSpacing: 1.8,
-      color: kBrandDeep,
-    );
-
-    final chars = text.split('');
-    final painters = chars.map((c) {
-      return TextPainter(
-        text: TextSpan(text: c, style: style),
-        textDirection: TextDirection.ltr,
-      )..layout();
-    }).toList();
-
-    // Total arc angle needed to fit all characters
-    final totalWidth = painters.fold(0.0, (sum, tp) => sum + tp.width);
-    final totalAngle = totalWidth / radius;
-
-    // Start angle: center the label at the top of the circle
-    double angle = -pi / 2 - totalAngle / 2;
-
-    for (int i = 0; i < chars.length; i++) {
-      final tp = painters[i];
-      final charAngle = tp.width / radius;
-      final midAngle = angle + charAngle / 2;
-
-      canvas.save();
-      canvas.translate(
-        cx + radius * cos(midAngle),
-        cy + radius * sin(midAngle),
-      );
-      canvas.rotate(midAngle + pi / 2); // tangent to the circle
-      canvas.translate(-tp.width / 2, -tp.height / 2);
-      tp.paint(canvas, Offset.zero);
-      canvas.restore();
-
-      angle += charAngle;
-    }
-  }
-
-  @override
-  bool shouldRepaint(_CurvedLabelPainter old) =>
-      old.text != text || old.radius != radius;
-}
-
-// ── Reel Mind Logo ────────────────────────────────────────────────────────────
-
-class ReelMindLogo extends StatelessWidget {
-  final double size;
-  const ReelMindLogo({super.key, this.size = 88});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: kBrand.withValues(alpha: 0.28),
-            blurRadius: 28,
-            offset: const Offset(0, 8),
-          ),
-          BoxShadow(
-            color: kNavy.withValues(alpha: 0.18),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: CustomPaint(
-        size: Size(size, size),
-        painter: _ReelLogoPainter(),
-      ),
-    );
-  }
-}
-
-class _ReelLogoPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-    final center = Offset(cx, cy);
-    final r = size.width / 2;
-
-    final bgPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [const Color(0xFF1C3050), kNavy],
-        center: Alignment.topLeft,
-        radius: 1.2,
-      ).createShader(Rect.fromCircle(center: center, radius: r));
-    canvas.drawCircle(center, r, bgPaint);
-
-    final ringRadius = r * 0.80;
-    final ringPaint = Paint()
-      ..color = kBrand
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = r * 0.055;
-    canvas.drawCircle(center, ringRadius, ringPaint);
-
-    const holeCount = 8;
-    final holeFill = Paint()..color = const Color(0xFFFFFFFF);
-    final holeErase = Paint()..color = kNavy;
-    for (int i = 0; i < holeCount; i++) {
-      final angle = (i / holeCount) * 2 * pi - pi / 2;
-      final hx = cx + cos(angle) * ringRadius;
-      final hy = cy + sin(angle) * ringRadius;
-      canvas.drawCircle(Offset(hx, hy), r * 0.075, holeFill);
-      canvas.drawCircle(Offset(hx, hy), r * 0.042, holeErase);
-    }
-
-    final spokePaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.18)
-      ..strokeWidth = r * 0.055
-      ..strokeCap = StrokeCap.round;
-    for (int i = 0; i < 3; i++) {
-      final angle = (i / 3) * 2 * pi - pi / 2;
-      canvas.drawLine(
-        Offset(cx + cos(angle) * r * 0.24, cy + sin(angle) * r * 0.24),
-        Offset(cx + cos(angle) * r * 0.60, cy + sin(angle) * r * 0.60),
-        spokePaint,
-      );
-    }
-
-    final hubGrad = Paint()
-      ..shader = RadialGradient(
-        colors: [kBrand, kBrandDeep],
-      ).createShader(Rect.fromCircle(center: center, radius: r * 0.28));
-    canvas.drawCircle(center, r * 0.28, hubGrad);
-    canvas.drawCircle(center, r * 0.14, Paint()..color = kNavy);
-
-    _drawSparkle(canvas, Offset(cx + r * 0.52, cy - r * 0.52), r * 0.10);
-  }
-
-  void _drawSparkle(Canvas canvas, Offset pos, double sz) {
-    final paint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = sz * 0.22
-      ..strokeCap = StrokeCap.round;
-    for (int i = 0; i < 4; i++) {
-      final angle = (i / 4) * 2 * pi;
-      canvas.drawLine(
-        Offset(
-            pos.dx + cos(angle) * sz * 0.3, pos.dy + sin(angle) * sz * 0.3),
-        Offset(pos.dx + cos(angle) * sz, pos.dy + sin(angle) * sz),
-        paint,
-      );
-    }
-    canvas.drawCircle(pos, sz * 0.18, Paint()..color = kBrand);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}

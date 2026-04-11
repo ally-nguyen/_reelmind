@@ -1,0 +1,38 @@
+<svg width="1024" height="500" viewBox="0 0 1024 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg2" x1="84" y1="58" x2="938" y2="452" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#152033"/>
+      <stop offset="0.6" stop-color="#1F3049"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+    <linearGradient id="panel2" x1="160" y1="92" x2="506" y2="422" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF8A72"/>
+      <stop offset="1" stop-color="#F25B44"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="500" fill="url(#bg2)"/>
+  <circle cx="874" cy="120" r="86" fill="#F6C76A" fill-opacity="0.18"/>
+  <circle cx="932" cy="430" r="92" fill="#FFFFFF" fill-opacity="0.08"/>
+
+  <rect x="72" y="76" width="402" height="348" rx="48" fill="url(#panel2)"/>
+  <rect x="106" y="114" width="334" height="272" rx="34" fill="#FFF8F2"/>
+  <rect x="198" y="96" width="150" height="28" rx="14" fill="#111318"/>
+
+  <text x="560" y="146" fill="#F6C76A" font-family="Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="3">REEL MIND</text>
+  <text x="560" y="222" fill="white" font-family="Georgia, serif" font-size="62" font-weight="700">Create your</text>
+  <text x="560" y="288" fill="white" font-family="Georgia, serif" font-size="62" font-weight="700">next best video</text>
+  <text x="560" y="354" fill="white" font-family="Georgia, serif" font-size="62" font-weight="700">with AI</text>
+
+  <text x="560" y="402" fill="#DCE6EF" font-family="Arial, sans-serif" font-size="22">Personalized scripts, better hooks, and faster content planning</text>
+
+  <circle cx="273" cy="250" r="95" stroke="#F6C76A" stroke-width="24"/>
+  <circle cx="273" cy="250" r="14" fill="#FFF7E7"/>
+  <circle cx="273" cy="155" r="18" fill="#FFF7E7"/>
+  <circle cx="368" cy="250" r="18" fill="#FFF7E7"/>
+  <circle cx="273" cy="345" r="18" fill="#FFF7E7"/>
+  <path d="M196 253C196 241.128 208.874 233.671 219.214 239.544L312.816 292.71C323.226 298.622 323.226 313.378 312.816 319.29L219.214 372.456C208.874 378.329 196 370.872 196 359V253Z" fill="#FFF7E7" fill-opacity="0.92"/>
+
+  <rect x="560" y="428" width="164" height="20" rx="10" fill="#FFFFFF" fill-opacity="0.12"/>
+  <rect x="736" y="428" width="132" height="20" rx="10" fill="#F6C76A" fill-opacity="0.5"/>
+</svg>

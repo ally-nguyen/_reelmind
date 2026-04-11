@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
 import '../services/firestore_service.dart';
+import '../utils/input_validator.dart';
 import '../widgets/app_background.dart';
 import '../widgets/auth_helpers.dart';
 import 'survey_videos_screen.dart';
@@ -46,10 +47,25 @@ class _SurveyCreatorsScreenState extends State<SurveyCreatorsScreen> {
   void _confirmAdd() {
     final name = _addNameCtrl.text.trim();
     if (name.isEmpty) return;
+
+    // SECURITY: validate and sanitise before adding to state.
+    final err = InputValidator.validateCreatorName(name);
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      return;
+    }
+    if (_creators.length >= InputValidator.maxCreatorCount) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Maximum creators reached.')),
+      );
+      return;
+    }
+
     setState(() {
       _creators.add(_CreatorEntry(
-        name: name,
-        notes: _addNotesCtrl.text.trim(),
+        name: InputValidator.sanitizeText(name),
+        notes: InputValidator.sanitizeAndTruncate(
+          _addNotesCtrl.text.trim(), InputValidator.maxCreatorStyleLength),
       ));
       _addNameCtrl.clear();
       _addNotesCtrl.clear();
@@ -68,10 +84,14 @@ class _SurveyCreatorsScreenState extends State<SurveyCreatorsScreen> {
     setState(() => _isSaving = true);
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid != null) {
+      // SECURITY: re-sanitise at save time as a defence-in-depth measure.
       final maps = _creators
+          .take(InputValidator.maxCreatorCount)
           .map((e) => {
-                'name': e.nameCtrl.text.trim(),
-                'style': e.notesCtrl.text.trim(),
+                'name': InputValidator.sanitizeAndTruncate(
+                  e.nameCtrl.text.trim(), InputValidator.maxCreatorNameLength),
+                'style': InputValidator.sanitizeAndTruncate(
+                  e.notesCtrl.text.trim(), InputValidator.maxCreatorStyleLength),
               })
           .toList();
       await FirestoreService.saveSurveyCreators(uid, maps);
@@ -214,6 +234,7 @@ class _SurveyCreatorsScreenState extends State<SurveyCreatorsScreen> {
             label: 'CREATOR NAME',
             controller: _addNameCtrl,
             hint: '@username or creator name',
+            maxLength: InputValidator.maxCreatorNameLength,
           ),
           const SizedBox(height: 10),
           _inlineField(
@@ -222,6 +243,7 @@ class _SurveyCreatorsScreenState extends State<SurveyCreatorsScreen> {
             hint:
                 'e.g. I like the calm aesthetic, confident voice, and how each frame feels edited with taste.',
             maxLines: 3,
+            maxLength: InputValidator.maxCreatorStyleLength,
           ),
           const SizedBox(height: 14),
           Row(
@@ -285,6 +307,7 @@ class _SurveyCreatorsScreenState extends State<SurveyCreatorsScreen> {
     required TextEditingController controller,
     String? hint,
     int maxLines = 1,
+    int? maxLength,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -302,9 +325,11 @@ class _SurveyCreatorsScreenState extends State<SurveyCreatorsScreen> {
         TextField(
           controller: controller,
           maxLines: maxLines,
+          maxLength: maxLength,
           style: GoogleFonts.manrope(
               fontSize: 14, fontWeight: FontWeight.w600, color: kText),
           decoration: InputDecoration(
+            counterText: '',
             border: InputBorder.none,
             enabledBorder: InputBorder.none,
             focusedBorder: InputBorder.none,

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
+import '../services/rate_limiter.dart';
+import '../utils/input_validator.dart';
 import '../widgets/app_background.dart';
 import '../widgets/auth_helpers.dart';
 import '../services/firestore_service.dart';
@@ -32,6 +34,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   void _submit() async {
     if (!_formKey.currentState!.validate()) return;
+
+    // SECURITY (OWASP A07): Rate-limit account creation to 3 per hour.
+    final rl = RateLimiter.instance.checkSignup();
+    if (!rl.allowed) {
+      final wait = rl.retryAfter != null
+          ? RateLimiter.waitMessage(rl.retryAfter!)
+          : 'later';
+      ScaffoldMessenger.of(context).showSnackBar(
+        authSnackBar('Too many sign-up attempts. $wait.', isError: true),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       final credential =
@@ -226,10 +241,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
             label: 'Full name',
             controller: _nameCtrl,
             hint: 'Your name',
-            validator: (v) {
-              if (v == null || v.trim().isEmpty) return 'Enter your name.';
-              return null;
-            },
+            // SECURITY: length limits prevent oversized display names.
+            validator: InputValidator.validateDisplayName,
           ),
           const SizedBox(height: 12),
           protoField(
@@ -237,11 +250,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
             controller: _emailCtrl,
             keyboardType: TextInputType.emailAddress,
             hint: 'you@example.com',
-            validator: (v) {
-              if (v == null || v.isEmpty) return 'Enter your email.';
-              if (!v.contains('@')) return 'Enter a valid email.';
-              return null;
-            },
+            // SECURITY: RFC 5322-based regex, not just '@' check.
+            validator: InputValidator.validateEmail,
           ),
           const SizedBox(height: 12),
           protoField(
@@ -252,13 +262,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
             hint: 'Create a secure password',
             onToggleObscure: () =>
                 setState(() => _obscurePassword = !_obscurePassword),
-            validator: (v) {
-              if (v == null || v.isEmpty) return 'Enter a password.';
-              if (v.length < 8) {
-                return 'Password must be at least 8 characters.';
-              }
-              return null;
-            },
+            // SECURITY: stricter validator for new passwords — requires
+            // uppercase + digit/symbol in addition to minimum length.
+            validator: InputValidator.validateNewPassword,
           ),
           const SizedBox(height: 20),
           _primaryButton(

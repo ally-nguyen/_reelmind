@@ -1,1 +1,43 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"reel-mind-faa75","appId":"1:465090294201:android:1b5ce44958862e292fc668","fileOutput":"android/app/google-services.json"}},"ios":{"default":{"projectId":"reel-mind-faa75","appId":"1:465090294201:ios:efe43be1804bfa4c2fc668","uploadDebugSymbols":false,"fileOutput":"ios/Runner/GoogleService-Info.plist"}},"dart":{"lib/firebase_options.dart":{"projectId":"reel-mind-faa75","configurations":{"android":"1:465090294201:android:1b5ce44958862e292fc668","ios":"1:465090294201:ios:efe43be1804bfa4c2fc668"}}}}}}
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ],
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "reel-mind-faa75",
+          "appId": "1:465090294201:android:1b5ce44958862e292fc668",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "reel-mind-faa75",
+          "appId": "1:465090294201:ios:efe43be1804bfa4c2fc668",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "reel-mind-faa75",
+          "configurations": {
+            "android": "1:465090294201:android:1b5ce44958862e292fc668",
+            "ios": "1:465090294201:ios:efe43be1804bfa4c2fc668"
+          }
+        }
+      }
+    }
+  }
+}
