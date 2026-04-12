@@ -39,6 +39,16 @@ class ClaudeResult<T> {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 class ClaudeService {
+  static const int _promptCaptionLength = 220;
+  static const int _promptCaptionCount = 6;
+  static const int _promptTopicLength = 40;
+  static const int _promptTopicCount = 12;
+  static const int _promptCreatorStyleLength = 120;
+  static const int _promptCreatorCount = 8;
+  static const int _promptExistingSummaryLength = 140;
+  static const int _promptExistingSummaryCount = 12;
+  static const int _promptExtraDirectionLength = 200;
+
   // Lazily obtain a reference to the deployed Cloud Function.
   static HttpsCallable get _fn =>
       FirebaseFunctions.instance.httpsCallable(
@@ -56,21 +66,21 @@ class ClaudeService {
     // Sanitise client-side before sending (defence in depth — server sanitises
     // again, but we don't want to send garbage over the network).
     final safeCaps = captions
-        .map((c) => InputValidator.sanitizeAndTruncate(c, InputValidator.maxCaptionLength))
+        .map((c) => InputValidator.sanitizeAndTruncate(c, _promptCaptionLength))
         .where((c) => c.isNotEmpty)
-        .take(InputValidator.maxCaptionCount)
+        .take(_promptCaptionCount)
         .toList();
 
     final safeTopics = topics
-        .map((t) => InputValidator.sanitizeAndTruncate(t, InputValidator.maxTopicLength))
+        .map((t) => InputValidator.sanitizeAndTruncate(t, _promptTopicLength))
         .where((t) => t.isNotEmpty)
-        .take(InputValidator.maxTopicCount)
+        .take(_promptTopicCount)
         .toList();
 
     final safeCreators = creators
         .map((c) => InputValidator.sanitizeAndTruncate(c, InputValidator.maxCreatorNameLength))
         .where((c) => c.isNotEmpty)
-        .take(InputValidator.maxCreatorCount)
+        .take(_promptCreatorCount)
         .toList();
 
     return _callIdeaFunction({
@@ -89,24 +99,47 @@ class ClaudeService {
     String? extraDirection,
   }) async {
     final captions = List<String>.from(signals['captions'] ?? [])
-        .map((c) => InputValidator.sanitizeAndTruncate(c, InputValidator.maxCaptionLength))
+        .map((c) => InputValidator.sanitizeAndTruncate(c, _promptCaptionLength))
         .where((c) => c.isNotEmpty)
-        .take(InputValidator.maxCaptionCount)
+        .take(_promptCaptionCount)
         .toList();
 
     final topics = List<String>.from(signals['topics'] ?? [])
-        .map((t) => InputValidator.sanitizeAndTruncate(t, InputValidator.maxTopicLength))
+        .map((t) => InputValidator.sanitizeAndTruncate(t, _promptTopicLength))
         .where((t) => t.isNotEmpty)
-        .take(InputValidator.maxTopicCount)
+        .take(_promptTopicCount)
         .toList();
 
-    // Creators may be String or Map — pass as-is; server normalises both forms.
     final rawCreators = List<dynamic>.from(signals['creators'] ?? [])
-        .take(InputValidator.maxCreatorCount)
+        .take(_promptCreatorCount)
+        .map((c) {
+          if (c is String) {
+            return InputValidator.sanitizeAndTruncate(
+              c,
+              InputValidator.maxCreatorNameLength,
+            );
+          }
+          if (c is Map) {
+            return {
+              'name': InputValidator.sanitizeAndTruncate(
+                (c['name'] ?? '').toString(),
+                InputValidator.maxCreatorNameLength,
+              ),
+              'style': InputValidator.sanitizeAndTruncate(
+                (c['style'] ?? '').toString(),
+                _promptCreatorStyleLength,
+              ),
+            };
+          }
+          return c;
+        })
         .toList();
 
     final safeDirection = extraDirection != null
-        ? InputValidator.sanitizeAndTruncate(extraDirection, InputValidator.maxExtraDirectionLength)
+        ? InputValidator.sanitizeAndTruncate(
+            extraDirection,
+            _promptExtraDirectionLength,
+          )
         : null;
 
     return _callIdeaFunction({
@@ -115,8 +148,8 @@ class ClaudeService {
       'topics': topics,
       'creators': rawCreators,
       'existingSummaries': existingSummaries
-          .map((s) => InputValidator.sanitizeAndTruncate(s, 300))
-          .take(50)
+          .map((s) => InputValidator.sanitizeAndTruncate(s, _promptExistingSummaryLength))
+          .take(_promptExistingSummaryCount)
           .toList(),
       if (safeDirection != null && safeDirection.isNotEmpty)
         'extraDirection': safeDirection,
@@ -131,19 +164,40 @@ class ClaudeService {
     Map<String, dynamic>? signals,
   }) async {
     final captions = List<String>.from(signals?['captions'] ?? [])
-        .map((c) => InputValidator.sanitizeAndTruncate(c, InputValidator.maxCaptionLength))
+        .map((c) => InputValidator.sanitizeAndTruncate(c, _promptCaptionLength))
         .where((c) => c.isNotEmpty)
-        .take(3)
+        .take(2)
         .toList();
 
     final topics = List<String>.from(signals?['topics'] ?? [])
-        .map((t) => InputValidator.sanitizeAndTruncate(t, InputValidator.maxTopicLength))
+        .map((t) => InputValidator.sanitizeAndTruncate(t, _promptTopicLength))
         .where((t) => t.isNotEmpty)
-        .take(InputValidator.maxTopicCount)
+        .take(8)
         .toList();
 
     final rawCreators = List<dynamic>.from(signals?['creators'] ?? [])
-        .take(InputValidator.maxCreatorCount)
+        .take(5)
+        .map((c) {
+          if (c is String) {
+            return InputValidator.sanitizeAndTruncate(
+              c,
+              InputValidator.maxCreatorNameLength,
+            );
+          }
+          if (c is Map) {
+            return {
+              'name': InputValidator.sanitizeAndTruncate(
+                (c['name'] ?? '').toString(),
+                InputValidator.maxCreatorNameLength,
+              ),
+              'style': InputValidator.sanitizeAndTruncate(
+                (c['style'] ?? '').toString(),
+                _promptCreatorStyleLength,
+              ),
+            };
+          }
+          return c;
+        })
         .toList();
 
     final result = await _callTextFunction({

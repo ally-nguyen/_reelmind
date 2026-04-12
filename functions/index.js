@@ -34,14 +34,16 @@ const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 // ── Constants (must stay in sync with lib/utils/input_validator.dart) ────────
 
 const LIMITS = {
-  maxCaptionLength: 500,
-  maxCaptionCount: 20,
-  maxTopicLength: 60,
-  maxTopicCount: 20,
+  maxCaptionLength: 220,
+  maxCaptionCount: 6,
+  maxTopicLength: 40,
+  maxTopicCount: 12,
   maxCreatorNameLength: 100,
-  maxCreatorStyleLength: 300,
-  maxCreatorCount: 15,
-  maxExtraDirectionLength: 500,
+  maxCreatorStyleLength: 120,
+  maxCreatorCount: 8,
+  maxExtraDirectionLength: 200,
+  maxExistingSummaryLength: 140,
+  maxExistingSummaryCount: 12,
   maxPromptLength: 32000, // hard cap on the assembled prompt before sending
 };
 
@@ -135,8 +137,8 @@ function validatePayload(data) {
   const existingSummaries = (
     Array.isArray(data.existingSummaries) ? data.existingSummaries : []
   )
-    .slice(0, 50)
-    .map((s) => sanitizeTruncate(String(s), 300));
+    .slice(0, LIMITS.maxExistingSummaryCount)
+    .map((s) => sanitizeTruncate(String(s), LIMITS.maxExistingSummaryLength));
 
   const extraDirection =
     typeof data.extraDirection === "string"
