@@ -244,6 +244,7 @@ class _HomeScreenState extends State<HomeScreen> {
               TextField(
                 controller: promptCtrl,
                 maxLines: 3,
+                maxLength: 200,
                 style: GoogleFonts.manrope(fontSize: 14, color: kText),
                 decoration: InputDecoration(
                   hintText:

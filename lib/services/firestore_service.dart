@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../models/idea_model.dart';
+import '../models/saved_advice_model.dart';
 
 class FirestoreService {
   static final _db = FirebaseFirestore.instance;
@@ -86,6 +87,55 @@ class FirestoreService {
     return doc.data()?['signals'] as Map<String, dynamic>?;
   }
 
+  static Future<void> saveAIAdvice(String uid, String advice) async {
+    await _db.collection('users').doc(uid).set(
+      {'aiAdvice': advice},
+      SetOptions(merge: true),
+    );
+  }
+
+  static Future<String?> getAIAdvice(String uid) async {
+    final doc = await _db.collection('users').doc(uid).get();
+    return doc.data()?['aiAdvice'] as String?;
+  }
+
+  static CollectionReference<Map<String, dynamic>> _savedAdviceRef(String uid) =>
+      _db.collection('users').doc(uid).collection('savedAdvice');
+
+  static Future<void> addSavedAdvice(String uid, String text) async {
+    await _savedAdviceRef(uid).add({
+      'text': text,
+      'savedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  static Stream<List<SavedAdviceModel>> savedAdviceStream(String uid) {
+    return _savedAdviceRef(uid)
+        .orderBy('savedAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs.map(SavedAdviceModel.fromDoc).toList());
+  }
+
+  static Future<List<String>> getSavedAdviceTexts(String uid) async {
+    final snap = await _savedAdviceRef(uid)
+        .orderBy('savedAt', descending: true)
+        .limit(8)
+        .get();
+    return snap.docs
+        .map((d) => (d.data()['text'] as String?) ?? '')
+        .where((t) => t.isNotEmpty)
+        .toList();
+  }
+
+  static Future<int> getSavedAdviceCount(String uid) async {
+    final snap = await _savedAdviceRef(uid).count().get();
+    return snap.count ?? 0;
+  }
+
+  static Future<void> deleteSavedAdvice(String uid, String docId) async {
+    await _savedAdviceRef(uid).doc(docId).delete();
+  }
+
   // ── Ideas ─────────────────────────────────────────────────────────────────
 
   static CollectionReference<Map<String, dynamic>> _ideasRef(String uid) =>
@@ -164,29 +214,48 @@ class FirestoreService {
   /// Does NOT delete the Firebase Auth account — the caller must do that
   /// separately (after re-authentication if required).
   static Future<void> deleteAllUserData(String uid) async {
-    // 1. Delete all ideas.
+    // Run Firestore and Storage deletions in parallel.
+    await Future.wait([
+      _deleteFirestoreData(uid),
+      _deleteStorageData(uid),
+    ]);
+  }
+
+  static Future<void> _deleteFirestoreData(String uid) async {
     final ideasSnap = await _ideasRef(uid).get();
-    await Future.wait(ideasSnap.docs.map((d) => d.reference.delete()));
 
-    // 2. Delete the user document.
-    await _db.collection('users').doc(uid).delete();
+    // Batch all deletes into single requests (max 500 per batch).
+    final refs = [
+      ...ideasSnap.docs.map((d) => d.reference),
+      _db.collection('users').doc(uid),
+    ];
 
-    // 3. Delete all Storage files under users/{uid}/.
-    //    listAll() is fine here — user-uploaded content is small.
+    const batchSize = 500;
+    final batches = <WriteBatch>[];
+    for (var i = 0; i < refs.length; i += batchSize) {
+      final batch = _db.batch();
+      for (final ref in refs.skip(i).take(batchSize)) {
+        batch.delete(ref);
+      }
+      batches.add(batch);
+    }
+
+    await Future.wait(batches.map((b) => b.commit()));
+  }
+
+  static Future<void> _deleteStorageData(String uid) async {
     try {
-      final storageRef =
-          FirebaseStorage.instance.ref().child('users/$uid');
+      final storageRef = FirebaseStorage.instance.ref().child('users/$uid');
       final list = await storageRef.listAll();
-      await Future.wait(list.items.map((item) => item.delete()));
-
-      // Also delete any files in sub-prefixes (e.g. users/{uid}/videos/).
-      await Future.wait(list.prefixes.map((prefix) async {
-        final sub = await prefix.listAll();
-        await Future.wait(sub.items.map((item) => item.delete()));
-      }));
+      await Future.wait([
+        ...list.items.map((item) => item.delete()),
+        ...list.prefixes.map((prefix) async {
+          final sub = await prefix.listAll();
+          await Future.wait(sub.items.map((item) => item.delete()));
+        }),
+      ]);
     } catch (_) {
-      // Storage deletion is best-effort — don't block account deletion if
-      // the folder doesn't exist or a file is already gone.
+      // Best-effort — don't block if folder doesn't exist.
     }
   }
 }

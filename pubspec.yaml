@@ -44,6 +44,7 @@ dependencies:
   firebase_storage: ^12.0.0
   cloud_functions: ^5.0.0  # Claude API calls go through Firebase Functions (key never on client)
   http: ^1.2.0              # still used for non-Claude HTTP (keep for future use)
+  google_sign_in: ^6.2.2
 
 dev_dependencies:
   flutter_test:

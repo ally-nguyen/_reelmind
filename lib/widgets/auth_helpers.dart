@@ -1,6 +1,108 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../app_theme.dart';
+
+// ── Google Sign-In ────────────────────────────────────────────────────────────
+
+/// Signs in with Google and returns the [UserCredential], or null if the user
+/// cancelled. Throws on error so callers can show an appropriate snack bar.
+Future<UserCredential?> signInWithGoogle() async {
+  final gsi = GoogleSignIn(scopes: const ['email']);
+  await gsi.signOut(); // clear cached account so picker always shows
+  final googleUser = await gsi.signIn();
+  if (googleUser == null) return null; // user cancelled
+
+  final googleAuth = await googleUser.authentication;
+  final credential = GoogleAuthProvider.credential(
+    accessToken: googleAuth.accessToken,
+    idToken: googleAuth.idToken,
+  );
+  return FirebaseAuth.instance.signInWithCredential(credential);
+}
+
+/// A styled "Continue with Google" button that calls [onPressed].
+Widget googleSignInButton({required VoidCallback? onPressed}) {
+  return SizedBox(
+    width: double.infinity,
+    child: OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        side: const BorderSide(color: Color(0x330F172A)),
+        backgroundColor: Colors.white,
+      ),
+      onPressed: onPressed,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Google "G" drawn with coloured quadrants
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CustomPaint(painter: _GoogleGPainter()),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            'Continue with Google',
+            style: GoogleFonts.manrope(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: kText,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// A thin "— or —" row divider used between the email form and social buttons.
+Widget orDivider() {
+  return Row(
+    children: [
+      const Expanded(child: Divider(color: Color(0x330F172A))),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Text(
+          'or',
+          style: GoogleFonts.manrope(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: kMuted,
+          ),
+        ),
+      ),
+      const Expanded(child: Divider(color: Color(0x330F172A))),
+    ],
+  );
+}
+
+/// Paints a simple 4-colour Google "G" logo.
+class _GoogleGPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = size.width / 2;
+    final rect = Rect.fromCircle(center: Offset(r, r), radius: r);
+
+    void arc(double start, double sweep, Color color) {
+      canvas.drawArc(rect, start, sweep, true, Paint()..color = color);
+    }
+
+    // Approximate Google colours per quadrant
+    arc(-0.5, 1.6, const Color(0xFF4285F4)); // blue – top-right
+    arc(1.1, 1.6, const Color(0xFF34A853)); // green – bottom-right
+    arc(2.7, 1.6, const Color(0xFFFBBC05)); // yellow – bottom-left
+    arc(4.3, 1.6, const Color(0xFFEA4335)); // red – top-left
+
+    // White centre circle to make it a ring
+    canvas.drawCircle(Offset(r, r), r * 0.55, Paint()..color = Colors.white);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter old) => false;
+}
 
 // ── Prototype-style glass card ────────────────────────────────────────────────
 
@@ -30,18 +132,15 @@ Widget glassCard({
 
 // ── Chips ─────────────────────────────────────────────────────────────────────
 
-Widget brandChip(String label) => _chip(
-      label,
-      bgColor: const Color(0x1FFF6B57),
-      textColor: kBrandDeep,
-    );
+Widget brandChip(String label) =>
+    _chip(label, bgColor: const Color(0x1FFF6B57), textColor: kBrandDeep);
 
 Widget softChip(String label) => _chip(
-      label,
-      bgColor: Color.fromRGBO(255, 255, 255, 0.80),
-      textColor: kMuted,
-      hasBorder: true,
-    );
+  label,
+  bgColor: Color.fromRGBO(255, 255, 255, 0.80),
+  textColor: kMuted,
+  hasBorder: true,
+);
 
 Widget _chip(
   String label, {
@@ -166,13 +265,13 @@ Widget surveyNavRow({
             borderRadius: BorderRadius.circular(18),
             boxShadow: const [
               BoxShadow(
-                  color: Color(0x14122033),
-                  blurRadius: 8,
-                  offset: Offset(0, 2)),
+                color: Color(0x14122033),
+                blurRadius: 8,
+                offset: Offset(0, 2),
+              ),
             ],
           ),
-          child: const Icon(Icons.chevron_left_rounded,
-              color: kText, size: 22),
+          child: const Icon(Icons.chevron_left_rounded, color: kText, size: 22),
         ),
       ),
       Column(
@@ -264,8 +363,7 @@ Widget surveyPrimaryButton({
         disabledBackgroundColor: kBrand.withValues(alpha: 0.6),
         elevation: 0,
         padding: const EdgeInsets.symmetric(vertical: 15),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         shadowColor: kBrand.withValues(alpha: 0.28),
       ).copyWith(elevation: WidgetStateProperty.all(8)),
       onPressed: onPressed,
@@ -274,7 +372,9 @@ Widget surveyPrimaryButton({
               width: 20,
               height: 20,
               child: CircularProgressIndicator(
-                  strokeWidth: 2, color: Colors.white),
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
             )
           : Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -284,7 +384,9 @@ Widget surveyPrimaryButton({
                 Text(
                   label,
                   style: GoogleFonts.manrope(
-                      fontSize: 15, fontWeight: FontWeight.w800),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ],
             ),
@@ -345,12 +447,18 @@ Widget authField({
     decoration: InputDecoration(
       labelText: label,
       labelStyle: GoogleFonts.manrope(
-          fontSize: 13, fontWeight: FontWeight.w500, color: kMuted),
+        fontSize: 13,
+        fontWeight: FontWeight.w500,
+        color: kMuted,
+      ),
       prefixIcon: Icon(prefixIcon, size: 18, color: kMuted),
       suffixIcon: obscure != null
           ? IconButton(
-              icon: Icon(obscure ? Icons.visibility_off : Icons.visibility,
-                  size: 18, color: kMuted),
+              icon: Icon(
+                obscure ? Icons.visibility_off : Icons.visibility,
+                size: 18,
+                color: kMuted,
+              ),
               onPressed: onToggleObscure,
             )
           : null,
@@ -376,8 +484,7 @@ Widget authField({
         borderRadius: BorderRadius.circular(16),
         borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.5),
       ),
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
     ),
   );
 }
@@ -395,8 +502,10 @@ ButtonStyle authButtonStyle() {
 
 SnackBar authSnackBar(String message, {bool isError = false}) {
   return SnackBar(
-    content: Text(message,
-        style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w600)),
+    content: Text(
+      message,
+      style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w600),
+    ),
     backgroundColor: isError ? const Color(0xFFEF4444) : kNavy,
     behavior: SnackBarBehavior.floating,
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),

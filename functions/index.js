@@ -145,8 +145,23 @@ function validatePayload(data) {
       ? sanitizeTruncate(data.extraDirection, LIMITS.maxExtraDirectionLength)
       : null;
 
+  const aiAdvice =
+    typeof data.aiAdvice === "string"
+      ? sanitizeTruncate(data.aiAdvice, 600)
+      : null;
+
+  const previousAdvice = (Array.isArray(data.previousAdvice) ? data.previousAdvice : [])
+    .slice(0, 8)
+    .map((a) => sanitizeTruncate(String(a), 300))
+    .filter((a) => a.length > 0);
+
+  const uncoveredTopics = (Array.isArray(data.uncoveredTopics) ? data.uncoveredTopics : [])
+    .slice(0, 15)
+    .map((t) => sanitizeTruncate(String(t), LIMITS.maxTopicLength))
+    .filter((t) => t.length > 0);
+
   // mode controls which prompt template to use
-  const validModes = ["generateFromSignals", "generateAvoidingExisting", "assistScript"];
+  const validModes = ["generateFromSignals", "generateAvoidingExisting", "assistScript", "getAIAdvice"];
   const mode = validModes.includes(data.mode) ? data.mode : "generateAvoidingExisting";
 
   const title =
@@ -159,7 +174,7 @@ function validatePayload(data) {
       ? sanitizeTruncate(data.currentScript, 10000)
       : "";
 
-  return { captions, topics, creators, existingSummaries, extraDirection, mode, title, currentScript };
+  return { captions, topics, creators, existingSummaries, extraDirection, aiAdvice, previousAdvice, uncoveredTopics, mode, title, currentScript };
 }
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
@@ -192,11 +207,15 @@ function buildSignalsParts({ captions, topics, creators, extraDirection }) {
   return parts;
 }
 
-function promptGenerateIdea(parts, avoidSection) {
+function promptGenerateIdea(parts, avoidSection, aiAdvice) {
+  const adviceSection = aiAdvice
+    ? `\n\nAI ADVICE FOR THIS CREATOR — factor this strategic guidance into the idea you generate:\n${aiAdvice}`
+    : "";
+
   return `You are a content strategy AI helping a short-form video creator develop their next short-form video idea.
 
 ${parts.join("\n\n")}
-${avoidSection}
+${avoidSection}${adviceSection}
 
 Using the signals above, generate ONE compelling video idea. Follow these rules strictly:
 
@@ -214,11 +233,46 @@ Using the signals above, generate ONE compelling video idea. Follow these rules 
 
 7. AUTHENTICITY — Specific and personal to this creator.
 
+8. AI ADVICE — If AI advice is provided above, prioritise the topic/angle it recommends when it fits the creator's signals.
+
 Return ONLY valid JSON — no markdown, no explanation:
 {
   "title": "a compelling, specific video title",
   "script": "• bullet one\\n• bullet two\\n• bullet three\\n• bullet four\\n• bullet five"
 }`;
+}
+
+function promptGetAIAdvice({ ideaSummaries, topics, captions, previousAdvice, uncoveredTopics }) {
+  const topicsLine = topics.length > 0 ? `Topics they create content around: ${topics.join(", ")}` : "";
+  const captionsLine = captions.length > 0
+    ? "Voice samples:\n" + captions.slice(0, 3).map((c) => `- ${c}`).join("\n")
+    : "";
+  const ideasSection = ideaSummaries.length > 0
+    ? "Their recent ideas (title [status: script preview]):\n" + ideaSummaries.map((s) => `- ${s}`).join("\n")
+    : "They have no ideas yet.";
+  const previousSection = previousAdvice && previousAdvice.length > 0
+    ? "\nPREVIOUS ADVICE ALREADY GIVEN — do NOT repeat any topic, angle, or suggestion from any of these:\n" +
+      previousAdvice.map((a, i) => `[${i + 1}] ${a}`).join("\n")
+    : "";
+
+  const hasUncovered = uncoveredTopics && uncoveredTopics.length > 0;
+  const contentGapInstruction = hasUncovered
+    ? `Content gap: The creator has ${uncoveredTopics.length} topic(s) from their signals list with no content drafted yet: ${uncoveredTopics.join(", ")}. Write one sentence telling them to create at least one Draft idea for each of these topics before looking for new content gaps.`
+    : `Content gap: Identify one topic or angle completely absent from ALL their ideas listed above AND from their topics list. This must be a genuinely new direction. Cross-check every idea title, script preview, and existing topic before suggesting. Has not been suggested in any previous advice above.`;
+
+  return `You are a content strategy advisor for a short-form video creator. Analyse their content pipeline and give them three specific, actionable pieces of advice.
+
+${topicsLine}
+${captionsLine}
+${ideasSection}
+${previousSection}
+Return exactly three pieces of advice in plain text using this format — no bullet points, no markdown, no preamble:
+
+Next topic: [one sentence recommending the single best topic they should cover next and why it fits their niche. Must be a topic NOT already in their ideas list and NOT previously suggested above.]
+Script tip: [one sentence identifying the most impactful improvement they could make to their current scripts or drafts. Must be a different angle from any script tips previously given above.]
+${contentGapInstruction}
+
+Be specific, not generic. Reference their actual topics and pipeline where possible.`;
 }
 
 function promptAssistScript({ title, currentScript, captions, topics, creators }) {
@@ -296,6 +350,9 @@ exports.callClaude = onCall(
       creators,
       existingSummaries,
       extraDirection,
+      aiAdvice,
+      previousAdvice,
+      uncoveredTopics,
       mode,
       title,
       currentScript,
@@ -306,6 +363,14 @@ exports.callClaude = onCall(
 
     if (mode === "assistScript") {
       userMessage = promptAssistScript({ title, currentScript, captions, topics, creators });
+    } else if (mode === "getAIAdvice") {
+      userMessage = promptGetAIAdvice({
+        ideaSummaries: existingSummaries,
+        topics,
+        captions,
+        previousAdvice,
+        uncoveredTopics,
+      });
     } else {
       const parts = buildSignalsParts({ captions, topics, creators, extraDirection });
       if (parts.length === 0) {
@@ -318,7 +383,7 @@ exports.callClaude = onCall(
             existingSummaries.map((s) => `- ${s}`).join("\n")
           : "";
 
-      userMessage = promptGenerateIdea(parts, avoidSection);
+      userMessage = promptGenerateIdea(parts, avoidSection, aiAdvice);
     }
 
     // Hard cap on assembled prompt length — prevents unbounded API spend.
@@ -337,8 +402,8 @@ exports.callClaude = onCall(
 
     const text = response.content[0].text;
 
-    // For assistScript mode return raw text; for idea modes return parsed JSON.
-    if (mode === "assistScript") {
+    // For assistScript and getAIAdvice modes return raw text; for idea modes return parsed JSON.
+    if (mode === "assistScript" || mode === "getAIAdvice") {
       return { text };
     }
 

@@ -17,7 +17,7 @@
       "android": {
         "default": {
           "projectId": "reel-mind-faa75",
-          "appId": "1:465090294201:android:1b5ce44958862e292fc668",
+          "appId": "1:465090294201:android:2d6c4c7574a59b3d2fc668",
           "fileOutput": "android/app/google-services.json"
         }
       },
@@ -33,7 +33,7 @@
         "lib/firebase_options.dart": {
           "projectId": "reel-mind-faa75",
           "configurations": {
-            "android": "1:465090294201:android:1b5ce44958862e292fc668",
+            "android": "1:465090294201:android:2d6c4c7574a59b3d2fc668",
             "ios": "1:465090294201:ios:efe43be1804bfa4c2fc668"
           }
         }

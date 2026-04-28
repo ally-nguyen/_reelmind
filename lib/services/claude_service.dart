@@ -97,6 +97,7 @@ class ClaudeService {
     required Map<String, dynamic> signals,
     required List<String> existingSummaries,
     String? extraDirection,
+    String? aiAdvice,
   }) async {
     final captions = List<String>.from(signals['captions'] ?? [])
         .map((c) => InputValidator.sanitizeAndTruncate(c, _promptCaptionLength))
@@ -142,6 +143,10 @@ class ClaudeService {
           )
         : null;
 
+    final safeAdvice = aiAdvice != null
+        ? InputValidator.sanitizeAndTruncate(aiAdvice, 600)
+        : null;
+
     return _callIdeaFunction({
       'mode': 'generateAvoidingExisting',
       'captions': captions,
@@ -153,6 +158,8 @@ class ClaudeService {
           .toList(),
       if (safeDirection != null && safeDirection.isNotEmpty)
         'extraDirection': safeDirection,
+      if (safeAdvice != null && safeAdvice.isNotEmpty)
+        'aiAdvice': safeAdvice,
     });
   }
 
@@ -217,36 +224,63 @@ class ClaudeService {
   static Future<ClaudeResult<IdeaModel>> generateIdeaWithSavedSignals({
     required Map<String, dynamic> signals,
     String? extraDirection,
+    String? aiAdvice,
   }) async {
     return generateIdeaAvoidingExisting(
       signals: signals,
       existingSummaries: const [],
       extraDirection: extraDirection,
+      aiAdvice: aiAdvice,
     );
   }
 
-  // ── Predict next move ──────────────────────────────────────────────────────
+  // ── AI advice ──────────────────────────────────────────────────────────────
 
-  static Future<String?> predictNextMove(List<IdeaModel> ideas) async {
-    if (ideas.isEmpty) return null;
-
-    final summaries = ideas.take(10).map((i) {
+  static Future<ClaudeResult<String>> getAIAdviceResult({
+    required List<IdeaModel> ideas,
+    Map<String, dynamic>? signals,
+    List<String>? previousAdvice,
+    List<String>? uncoveredTopics,
+  }) async {
+    final summaries = ideas.take(15).map((i) {
       final preview = i.script.isNotEmpty
-          ? i.script.substring(0, i.script.length.clamp(0, 120))
+          ? i.script.substring(0, i.script.length.clamp(0, 100))
           : '';
       return '"${i.title}" [${i.status}]${preview.isNotEmpty ? ': $preview...' : ''}';
     }).toList();
 
-    final result = await _callTextFunction({
-      'mode': 'assistScript',
-      'title': 'PREDICT_NEXT_MOVE',
-      'currentScript': summaries.join('\n'),
-      'captions': <String>[],
-      'topics': <String>[],
-      'creators': <dynamic>[],
-    });
+    final topics = List<String>.from(signals?['topics'] ?? [])
+        .map((t) => InputValidator.sanitizeAndTruncate(t, _promptTopicLength))
+        .where((t) => t.isNotEmpty)
+        .take(_promptTopicCount)
+        .toList();
 
-    return result.value;
+    final captions = List<String>.from(signals?['captions'] ?? [])
+        .map((c) => InputValidator.sanitizeAndTruncate(c, _promptCaptionLength))
+        .where((c) => c.isNotEmpty)
+        .take(3)
+        .toList();
+
+    final safePrevious = (previousAdvice ?? [])
+        .map((a) => InputValidator.sanitizeAndTruncate(a, 300))
+        .where((a) => a.isNotEmpty)
+        .take(8)
+        .toList();
+
+    final safeUncovered = (uncoveredTopics ?? [])
+        .map((t) => InputValidator.sanitizeAndTruncate(t, _promptTopicLength))
+        .where((t) => t.isNotEmpty)
+        .toList();
+
+    return _callTextFunction({
+      'mode': 'getAIAdvice',
+      'existingSummaries': summaries,
+      'topics': topics,
+      'captions': captions,
+      'creators': <dynamic>[],
+      if (safePrevious.isNotEmpty) 'previousAdvice': safePrevious,
+      if (safeUncovered.isNotEmpty) 'uncoveredTopics': safeUncovered,
+    });
   }
 
   // ── Shared call helpers ────────────────────────────────────────────────────

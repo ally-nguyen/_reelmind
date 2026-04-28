@@ -8,6 +8,7 @@ import '../widgets/app_background.dart';
 import '../widgets/auth_helpers.dart';
 import '../services/firestore_service.dart';
 import 'survey_topics_screen.dart';
+import 'dart:developer' as dev;
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -85,6 +86,52 @@ class _SignUpScreenState extends State<SignUpScreen> {
       };
       ScaffoldMessenger.of(context)
           .showSnackBar(authSnackBar(msg, isError: true));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _handleGoogleSignIn() async {
+    setState(() => _isLoading = true);
+    try {
+      final result = await signInWithGoogle();
+      if (result == null) return; // user cancelled
+
+      final user = result.user!;
+      final isNew = result.additionalUserInfo?.isNewUser ?? false;
+
+      if (isNew) {
+        await FirestoreService.createUserDoc(user.uid, user.email ?? '');
+        await FirestoreService.saveSignals(
+          user.uid,
+          captions: [],
+          topics: [],
+          creators: [],
+          videos: [],
+        );
+      }
+
+      if (!mounted) return;
+      if (isNew) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const SurveyTopicsScreen()),
+          (_) => false,
+        );
+      } else {
+        Navigator.pushNamedAndRemoveUntil(context, '/home', (_) => false);
+      }
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        authSnackBar('Google sign-in failed: ${e.message}', isError: true),
+      );
+    } catch (e) {
+      dev.log('Google sign-in error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        authSnackBar('Google sign-in failed. Try again.', isError: true),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -272,6 +319,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
             icon: Icons.arrow_forward_rounded,
             onPressed: _isLoading ? null : _submit,
             isLoading: _isLoading,
+          ),
+          const SizedBox(height: 14),
+          orDivider(),
+          const SizedBox(height: 14),
+          googleSignInButton(
+            onPressed: _isLoading ? null : _handleGoogleSignIn,
           ),
           const SizedBox(height: 16),
           Row(

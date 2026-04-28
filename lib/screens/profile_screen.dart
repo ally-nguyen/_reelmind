@@ -5,12 +5,14 @@ import '../app_theme.dart';
 import '../models/idea_model.dart';
 import '../services/claude_service.dart';
 import '../services/firestore_service.dart';
+import '../services/rate_limiter.dart';
 import '../widgets/app_background.dart';
 import '../widgets/app_tab_bar.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/rm_chip.dart';
 import '../widgets/tutorial_overlay.dart';
 import 'archived_ideas_screen.dart';
+import 'saved_advice_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -20,11 +22,15 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  String? _nextMove;
-  bool _loadingNextMove = false;
+  String? _aiAdvice;
+  bool _loadingAdvice = false;
+  bool _currentAdviceSaved = false;
+  bool _savingAdvice = false;
   List<IdeaModel> _ideas = [];
   Map<String, dynamic>? _signals;
   int _archivedCount = 0;
+  List<String> _savedAdviceTexts = [];
+  int _savedAdviceCount = 0;
 
   // Tutorial
   bool _showTutorial = false;
@@ -40,7 +46,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _loadIdeasAndPredict();
+    _loadIdeasAndGetAdvice();
   }
 
   @override
@@ -49,30 +55,102 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.dispose();
   }
 
-  Future<void> _loadIdeasAndPredict() async {
+  Future<void> _loadIdeasAndGetAdvice() async {
     final uid = _uid;
     if (uid == null) return;
-    setState(() => _loadingNextMove = true);
+    setState(() { _loadingAdvice = true; _currentAdviceSaved = false; });
     try {
       final results = await Future.wait([
         FirestoreService.ideasStream(uid).first,
         FirestoreService.getSignals(uid),
         FirestoreService.archivedIdeasStream(uid).first,
+        FirestoreService.getSavedAdviceTexts(uid),
       ]);
       final ideas = results[0] as List<IdeaModel>;
       final signals = results[1] as Map<String, dynamic>?;
       final archived = results[2] as List<IdeaModel>;
+      final savedTexts = results[3] as List<String>;
       if (!mounted) return;
+
+      // Topics from signals that have zero ideas tagged
+      final signalTopics = List<String>.from(signals?['topics'] ?? []);
+      final uncoveredTopics = signalTopics
+          .where((t) => !ideas.any((i) => i.tags.contains(t)))
+          .toList();
+
+      // Fetch full count separately (getSavedAdviceTexts is capped at 8)
+      final countSnap = await FirestoreService.getSavedAdviceCount(uid);
+
       setState(() {
         _ideas = ideas;
         _signals = signals;
         _archivedCount = archived.length;
+        _savedAdviceTexts = savedTexts;
+        _savedAdviceCount = countSnap;
       });
-      final move = await ClaudeService.predictNextMove(ideas);
+      final result = await ClaudeService.getAIAdviceResult(
+        ideas: ideas,
+        signals: signals,
+        previousAdvice: savedTexts,
+        uncoveredTopics: uncoveredTopics,
+      );
       if (!mounted) return;
-      setState(() => _nextMove = move);
+      if (result.isOk) {
+        setState(() => _aiAdvice = result.value);
+        if (result.value != null) {
+          await FirestoreService.saveAIAdvice(uid, result.value!);
+        }
+      } else {
+        final String msg;
+        if (result.error == ClaudeErrorKind.rateLimitedLocally) {
+          final wait = result.retryAfter != null
+              ? RateLimiter.waitMessage(result.retryAfter!)
+              : 'in a moment';
+          msg = 'AI generation limit reached (10/hour). $wait.';
+        } else if (result.error == ClaudeErrorKind.rateLimitedByApi) {
+          msg = 'AI generation limit reached (10/hour). Try again later.';
+        } else {
+          msg = 'Could not load advice. Check your connection.';
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(msg,
+                style: GoogleFonts.manrope(
+                    fontSize: 13, fontWeight: FontWeight.w600)),
+            backgroundColor: const Color(0xFFEF4444),
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ));
+        }
+      }
     } finally {
-      if (mounted) setState(() => _loadingNextMove = false);
+      if (mounted) setState(() => _loadingAdvice = false);
+    }
+  }
+
+  Future<void> _saveCurrentAdvice() async {
+    final uid = _uid;
+    final advice = _aiAdvice;
+    if (uid == null || advice == null || _currentAdviceSaved || _savingAdvice) return;
+    setState(() => _savingAdvice = true);
+    try {
+      await FirestoreService.addSavedAdvice(uid, advice);
+      if (!mounted) return;
+      setState(() {
+        _currentAdviceSaved = true;
+        _savedAdviceCount = _savedAdviceCount + 1;
+        _savedAdviceTexts = [advice, ..._savedAdviceTexts];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Advice saved!',
+            style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w600)),
+        backgroundColor: kNavy,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ));
+    } finally {
+      if (mounted) setState(() => _savingAdvice = false);
     }
   }
 
@@ -98,7 +176,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       TutorialStep(
         eyebrow: 'Production Stats',
         title: 'Track your idea pipeline.',
-        body: 'See how many ideas you have in total, how many are in progress, and how many are archived. Tap Archived to browse or restore old ideas.',
+        body: 'See how many ideas you have in total, how many are archived, and your saved advice by AI. Tap Archived to browse or restore old ideas.',
         spotlightRectBuilder: () => rectOf(_statsKey),
       ),
       TutorialStep(
@@ -108,9 +186,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         spotlightRectBuilder: () => rectOf(_themesKey),
       ),
       TutorialStep(
-        eyebrow: 'Best Next Move',
-        title: 'Get a personalised AI suggestion.',
-        body: 'Claude analyses your pipeline and recommends what to work on next — whether that\'s finishing a draft, posting a ready idea, or generating something new.',
+        eyebrow: 'Advice by AI',
+        title: 'Get personalised strategic advice.',
+        body: 'Claude analyses your pipeline and tells you the best next topic to cover, what to improve in your scripts, and what content gaps to fill.',
         onBeforeShow: () => _scrollCtrl.animateTo(
           _scrollCtrl.position.maxScrollExtent,
           duration: const Duration(milliseconds: 450),
@@ -236,117 +314,145 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _statsRow(BuildContext context) {
-    final drafted = _ideas.where((i) => i.status == 'Draft').length;
-    final scripted = _ideas.where((i) => i.status == 'Script Ready').length;
-    return IntrinsicHeight(key: _statsKey,
-      child: Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Column(
+      key: _statsKey,
       children: [
-        Expanded(
-          child: GlassCard(
-            padding: const EdgeInsets.all(16),
-            borderRadius: 22,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('TOTAL IDEAS',
-                    style: GoogleFonts.manrope(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.6,
-                        color: const Color(0xFF94A3B8))),
-                const SizedBox(height: 8),
-                Text('${_ideas.length}',
-                    style: GoogleFonts.manrope(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                        color: kText)),
-                Text('across all stages',
-                    style: GoogleFonts.manrope(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: kMuted)),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: GlassCard(
-            padding: const EdgeInsets.all(16),
-            borderRadius: 22,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('IN PROGRESS',
-                    style: GoogleFonts.manrope(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.6,
-                        color: const Color(0xFF94A3B8))),
-                const SizedBox(height: 8),
-                Text('${drafted + scripted}',
-                    style: GoogleFonts.manrope(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                        color: kText)),
-                Text('draft + script ready',
-                    style: GoogleFonts.manrope(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: kMuted)),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: GestureDetector(
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => const ArchivedIdeasScreen()),
-            ),
-            child: GlassCard(
-              padding: const EdgeInsets.all(16),
-              borderRadius: 22,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: GlassCard(
+                  padding: const EdgeInsets.all(16),
+                  borderRadius: 22,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Flexible(
-                        child: Text('ARCHIVED',
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.manrope(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1.6,
-                                color: const Color(0xFF94A3B8))),
-                      ),
-                      const Icon(Icons.chevron_right,
-                          size: 14, color: kBrand),
+                      Text('TOTAL IDEAS',
+                          style: GoogleFonts.manrope(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.6,
+                              color: const Color(0xFF94A3B8))),
+                      const SizedBox(height: 8),
+                      Text('${_ideas.length}',
+                          style: GoogleFonts.manrope(
+                              fontSize: 28,
+                              fontWeight: FontWeight.w800,
+                              color: kText)),
+                      Text('across all stages',
+                          style: GoogleFonts.manrope(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: kMuted)),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text('$_archivedCount',
-                      style: GoogleFonts.manrope(
-                          fontSize: 28,
-                          fontWeight: FontWeight.w800,
-                          color: kText)),
-                  Text('ideas archived',
-                      style: GoogleFonts.manrope(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: kMuted)),
-                ],
+                ),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const ArchivedIdeasScreen()),
+                  ),
+                  child: GlassCard(
+                    padding: const EdgeInsets.all(16),
+                    borderRadius: 22,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Flexible(
+                              child: Text('ARCHIVED',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.manrope(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 1.6,
+                                      color: const Color(0xFF94A3B8))),
+                            ),
+                            const Icon(Icons.chevron_right,
+                                size: 14, color: kBrand),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text('$_archivedCount',
+                            style: GoogleFonts.manrope(
+                                fontSize: 28,
+                                fontWeight: FontWeight.w800,
+                                color: kText)),
+                        Text('ideas archived',
+                            style: GoogleFonts.manrope(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                color: kMuted)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        GestureDetector(
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SavedAdviceScreen()),
+            );
+            final uid = _uid;
+            if (uid != null && mounted) {
+              final count = await FirestoreService.getSavedAdviceCount(uid);
+              if (mounted) setState(() => _savedAdviceCount = count);
+            }
+          },
+          child: GlassCard(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            borderRadius: 22,
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: kBrand.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.bookmark_outlined, size: 18, color: kBrand),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('SAVED ADVICE',
+                          style: GoogleFonts.manrope(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.6,
+                              color: const Color(0xFF94A3B8))),
+                      const SizedBox(height: 2),
+                      Text(
+                        '$_savedAdviceCount ${_savedAdviceCount == 1 ? 'piece' : 'pieces'} saved',
+                        style: GoogleFonts.manrope(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: kText),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, size: 16, color: kBrand),
+              ],
             ),
           ),
         ),
       ],
-    ),
     );
   }
 
@@ -478,6 +584,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _formattedAdvice(String advice) {
+    final baseStyle = GoogleFonts.manrope(
+        fontSize: 14, fontWeight: FontWeight.w500, color: kText, height: 1.7);
+    final boldStyle = GoogleFonts.manrope(
+        fontSize: 14, fontWeight: FontWeight.w800, color: kText, height: 1.7);
+
+    final spans = <InlineSpan>[];
+    for (final line in advice.trim().split('\n')) {
+      if (spans.isNotEmpty) spans.add(const TextSpan(text: '\n'));
+      final colon = line.indexOf(':');
+      if (colon > 0) {
+        spans.add(TextSpan(text: line.substring(0, colon + 1), style: boldStyle));
+        spans.add(TextSpan(text: line.substring(colon + 1), style: baseStyle));
+      } else {
+        spans.add(TextSpan(text: line, style: baseStyle));
+      }
+    }
+
+    return RichText(text: TextSpan(children: spans));
+  }
+
   Widget _bestNextMove() {
     return GlassCard(key: _nextMoveKey,
       padding: const EdgeInsets.all(18),
@@ -488,11 +615,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Best next move', style: sectionTitle),
+              Text('Advice by AI', style: sectionTitle),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (_loadingNextMove) ...[
+                  if (_loadingAdvice) ...[
                     const SizedBox(
                       width: 14,
                       height: 14,
@@ -501,31 +628,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     const SizedBox(width: 8),
                   ],
-                  const Icon(Icons.trending_up, color: kBrandDeep, size: 20),
+                  const Icon(Icons.tips_and_updates_outlined, color: kBrandDeep, size: 20),
                 ],
               ),
             ],
           ),
           const SizedBox(height: 12),
-          if (_loadingNextMove && _nextMove == null)
-            Text('Analyzing your ideas...',
+          if (_loadingAdvice && _aiAdvice == null)
+            Text('Analyzing your content...',
                 style: GoogleFonts.manrope(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
                     color: kMuted,
                     height: 1.6))
-          else if (_nextMove != null)
-            Text(
-              _nextMove!,
-              style: GoogleFonts.manrope(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: kText,
-                  height: 1.6),
-            )
+          else if (_aiAdvice != null)
+            _formattedAdvice(_aiAdvice!)
           else if (_ideas.isEmpty)
             Text(
-              'Create a few ideas in the workspace first — then come back for a personalized prediction.',
+              'Create a few ideas in the workspace first — then come back for personalised advice.',
               style: GoogleFonts.manrope(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
@@ -534,29 +654,62 @@ class _ProfileScreenState extends State<ProfileScreen> {
             )
           else
             GestureDetector(
-              onTap: _loadIdeasAndPredict,
+              onTap: _loadIdeasAndGetAdvice,
               child: Text('Tap to retry',
                   style: GoogleFonts.manrope(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: kBrand)),
             ),
-          if (_nextMove != null) ...[
+          if (_aiAdvice != null) ...[
             const SizedBox(height: 14),
-            GestureDetector(
-              onTap: _loadIdeasAndPredict,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.refresh, size: 14, color: kBrandDeep),
-                  const SizedBox(width: 4),
-                  Text('Refresh prediction',
-                      style: GoogleFonts.manrope(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: kBrandDeep)),
-                ],
-              ),
+            Row(
+              children: [
+                GestureDetector(
+                  onTap: _loadIdeasAndGetAdvice,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.refresh, size: 14, color: kBrandDeep),
+                      const SizedBox(width: 4),
+                      Text('Refresh',
+                          style: GoogleFonts.manrope(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: kBrandDeep)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: _currentAdviceSaved ? null : _saveCurrentAdvice,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_savingAdvice)
+                        const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: kBrand),
+                        )
+                      else
+                        Icon(
+                          _currentAdviceSaved ? Icons.bookmark : Icons.bookmark_outline,
+                          size: 14,
+                          color: _currentAdviceSaved ? kBrand : kBrandDeep,
+                        ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _currentAdviceSaved ? 'Saved' : 'Save advice',
+                        style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: _currentAdviceSaved ? kBrand : kBrandDeep),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ],

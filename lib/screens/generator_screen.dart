@@ -60,6 +60,8 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
 
     // Build rich summaries of existing ideas so Claude avoids their angles too
     final existingIdeas = await FirestoreService.ideasStream(uid).first;
+    final storedAdvice = await FirestoreService.getAIAdvice(uid);
+
     final existingSummaries = existingIdeas
         .where((i) => i.title.isNotEmpty)
         .map((i) {
@@ -83,6 +85,7 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
       signals: signals,
       existingSummaries: existingSummaries,
       extraDirection: direction,
+      aiAdvice: storedAdvice,
     );
 
     if (!mounted) return;
@@ -96,7 +99,7 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
             : 'in a moment';
         msg = 'Generation limit reached. $wait.';
       } else if (result.error == ClaudeErrorKind.rateLimitedByApi) {
-        msg = 'Too many requests. Please wait a minute and try again.';
+        msg = 'AI generation limit reached (10/hour). Try again later.';
       } else {
         msg = 'Could not generate an idea. Check your connection and try again.';
       }
@@ -170,7 +173,7 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
               TextField(
                 controller: promptCtrl,
                 maxLines: 3,
-                maxLength: InputValidator.maxExtraDirectionLength,
+                maxLength: 200,
                 style: GoogleFonts.manrope(fontSize: 14, color: kText),
                 decoration: InputDecoration(
                   hintText:

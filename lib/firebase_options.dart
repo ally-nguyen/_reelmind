@@ -51,7 +51,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyCkYI5_JdOEA4MXPoB2WPyhtGYEUagGP6E',
-    appId: '1:465090294201:android:1b5ce44958862e292fc668',
+    appId: '1:465090294201:android:2d6c4c7574a59b3d2fc668',
     messagingSenderId: '465090294201',
     projectId: 'reel-mind-faa75',
     storageBucket: 'reel-mind-faa75.firebasestorage.app',

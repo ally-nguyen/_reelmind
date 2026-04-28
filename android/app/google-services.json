@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "465090294201-uh499hc7q44a3cdl1f6mmtbeirkeke1l.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.allynguyen.reelmind",
+            "certificate_hash": "b1c0164ba4226a9ba139f06d843538a5e450fd04"
+          }
+        },
+        {
           "client_id": "465090294201-ofkk36p9l58u9s98tuj27cd7go9ps2d4.apps.googleusercontent.com",
           "client_type": 3
         }
