@@ -14,6 +14,22 @@
       },
       "oauth_client": [
         {
+          "client_id": "465090294201-q3dn7ig3li1t9altosecgrrhi87gunka.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.allynguyen.reelmind",
+            "certificate_hash": "0aef0db70d98d7ba0bd777cc63ecfd91bee3c826"
+          }
+        },
+        {
+          "client_id": "465090294201-trkv696bnfq7v3c1dd20l2uraj7dc37o.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.allynguyen.reelmind",
+            "certificate_hash": "f36dac9da7154afb548d27a5159d89bac2e57d99"
+          }
+        },
+        {
           "client_id": "465090294201-uh499hc7q44a3cdl1f6mmtbeirkeke1l.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
