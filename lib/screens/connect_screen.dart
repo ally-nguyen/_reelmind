@@ -23,13 +23,9 @@ class ConnectScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _statusBar(),
-                  const SizedBox(height: 4),
                   _heroCard(context),
                   const SizedBox(height: 16),
                   _whatGetsAnalyzed(),
-                  const SizedBox(height: 16),
-                  _afterImport(),
                 ],
               ),
             ),
@@ -39,27 +35,6 @@ class ConnectScreen extends StatelessWidget {
             fabRoute: '/workspace',
             fabIcon: Icons.add,
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _statusBar() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text('9:41',
-              style: GoogleFonts.manrope(
-                  fontSize: 13, fontWeight: FontWeight.w700, color: kText)),
-          Row(children: const [
-            Icon(Icons.signal_cellular_alt, size: 16, color: kText),
-            SizedBox(width: 6),
-            Icon(Icons.wifi, size: 16, color: kText),
-            SizedBox(width: 6),
-            Icon(Icons.battery_3_bar, size: 16, color: kText),
-          ]),
         ],
       ),
     );
@@ -186,43 +161,6 @@ class ConnectScreen extends StatelessWidget {
     );
   }
 
-  Widget _afterImport() {
-    return GlassCard(
-      padding: const EdgeInsets.all(18),
-      borderRadius: 26,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Flexible(
-                child: Text('After import',
-                    style: GoogleFonts.manrope(
-                        fontSize: 14, fontWeight: FontWeight.w800, color: kText)),
-              ),
-              const SizedBox(width: 12),
-              Text('READY INSTANTLY',
-                  style: GoogleFonts.manrope(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.6,
-                      color: const Color(0xFF94A3B8))),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _afterItem(Icons.storage_outlined,
-              'A profile is made for you for fast idea generation and draft memory.'),
-          const SizedBox(height: 10),
-          _afterItem(Icons.auto_awesome,
-              'Tap "Generate for me" to formulate 5–7 bullet points of a brand new scripted idea based on your inspiration.'),
-          const SizedBox(height: 10),
-          _afterItem(Icons.auto_awesome,
-              'Tap "New Idea" to start jotting down your own script for your next video, but if you need assistance, tap "AI Assist" to help build on your existing idea!'),
-        ],
-      ),
-    );
-  }
 
   Widget _afterItem(IconData icon, String text) {
     return Container(

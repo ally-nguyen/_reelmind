@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import '../app_theme.dart';
 import '../services/firestore_service.dart';
@@ -19,8 +21,8 @@ class _CreatorEntry {
 class _VideoEntry {
   final TextEditingController nameCtrl;
   final TextEditingController notesCtrl;
-  final String? url;
-  final String? storagePath;
+  String? url;
+  String? storagePath;
   String? localFilePath;
 
   _VideoEntry({
@@ -70,7 +72,7 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
   // Videos
   final List<_VideoEntry> _videos = [];
 
-  bool _isAnalyzing = false;
+  bool _isSaving = false;
   bool _isLoadingExisting = true;
 
   @override
@@ -266,7 +268,33 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
             })
         .toList();
 
-    // Videos — sanitise name and notes.
+    // Upload any locally-picked videos to Firebase Storage so they're accessible
+    // server-side. This is the only step that actually takes time, so we show
+    // the loading overlay only here.
+    final videosToUpload = uid != null
+        ? _videos.where((v) => v.hasLocalFile && !v.isUploaded).toList()
+        : <_VideoEntry>[];
+
+    if (videosToUpload.isNotEmpty) {
+      setState(() => _isSaving = true);
+      for (final video in videosToUpload) {
+        try {
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final fileName = video.localFilePath!.split('/').last;
+          final storePath = 'users/$uid/videos/${timestamp}_$fileName';
+          final ref = FirebaseStorage.instance.ref(storePath);
+          await ref.putFile(File(video.localFilePath!));
+          video.url = await ref.getDownloadURL();
+          video.storagePath = storePath;
+        } catch (_) {
+          // Upload failure is non-fatal — video is saved with name/notes only.
+        }
+      }
+      if (!mounted) return;
+    }
+
+    // Build video maps after uploads — localFilePath is intentionally excluded
+    // since it's a device-specific path that is meaningless in Firestore.
     final videoMaps = _videos
         .take(InputValidator.maxVideoCount)
         .map((v) => {
@@ -276,14 +304,13 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
                 v.notesCtrl.text.trim(), InputValidator.maxVideoNotesLength),
               'url': v.url ?? '',
               'storagePath': v.storagePath ?? '',
-              'localFilePath': v.localFilePath ?? '',
             })
         .toList();
 
-    setState(() => _isAnalyzing = true);
-
+    // Fire-and-forget the Firestore write — local cache is updated instantly
+    // and the server sync happens in the background.
     if (uid != null) {
-      await FirestoreService.saveSignals(
+      FirestoreService.saveSignals(
         uid,
         captions: captions,
         topics: topics,
@@ -332,13 +359,13 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
               ],
             ),
           ),
-          if (_isAnalyzing) _loadingOverlay(),
+          if (_isSaving) _uploadingOverlay(),
         ],
       ),
     );
   }
 
-  Widget _loadingOverlay() {
+  Widget _uploadingOverlay() {
     return Container(
       color: const Color(0xCC0F172A),
       child: Center(
@@ -376,7 +403,7 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
               ),
               const SizedBox(height: 24),
               Text(
-                'Analyzing your signals',
+                'Uploading videos',
                 style: GoogleFonts.fraunces(
                   fontSize: 22,
                   fontWeight: FontWeight.w700,
@@ -387,7 +414,7 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
               ),
               const SizedBox(height: 10),
               Text(
-                'Saving your captions, topics, and creator references so Claude can generate ideas tailored to your style.',
+                'Your videos are being saved to the cloud so they can be used for content analysis.',
                 style: GoogleFonts.manrope(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
@@ -1193,7 +1220,7 @@ class _ImportSignalsScreenState extends State<ImportSignalsScreen> {
 
   Widget _analyzeButton() {
     return GestureDetector(
-      onTap: _isAnalyzing ? null : _analyze,
+      onTap: _isSaving ? null : _analyze,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 16),

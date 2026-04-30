@@ -142,8 +142,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _statusBar(),
-                        const SizedBox(height: 4),
                         _heroCard(context),
                         const SizedBox(height: 16),
                         _statsRow(context, ideas),
@@ -174,38 +172,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _statusBar() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text('9:41',
-              style: GoogleFonts.manrope(
-                  fontSize: 13, fontWeight: FontWeight.w700, color: kText)),
-          Row(
-            children: const [
-              Icon(Icons.signal_cellular_alt, size: 16, color: kText),
-              SizedBox(width: 6),
-              Icon(Icons.wifi, size: 16, color: kText),
-              SizedBox(width: 6),
-              Icon(Icons.battery_full, size: 16, color: kText),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showGenerateSheet(BuildContext context) {
     final promptCtrl = TextEditingController();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => Padding(
+      builder: (sheetCtx) => Padding(
         padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom),
+            bottom: MediaQuery.of(sheetCtx).viewInsets.bottom),
         child: Container(
           margin: const EdgeInsets.fromLTRB(16, 0, 16, 32),
           padding: const EdgeInsets.all(24),

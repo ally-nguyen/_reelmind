@@ -73,9 +73,14 @@ class RateLimiter {
     window: const Duration(hours: 1),
   );
 
-  // Claude API: 10 generations per hour.  This caps unintentional charges from
-  // rapid regeneration taps.  Adjust if your usage pattern requires more.
-  final _claudeBucket = _RateLimitBucket(
+  // Claude API – idea generation: 20 per hour.
+  final _ideaBucket = _RateLimitBucket(
+    maxEvents: 20,
+    window: const Duration(hours: 1),
+  );
+
+  // Claude API – advice generation: 10 per hour (user-triggered refreshes only).
+  final _adviceBucket = _RateLimitBucket(
     maxEvents: 10,
     window: const Duration(hours: 1),
   );
@@ -94,8 +99,11 @@ class RateLimiter {
   /// Call before every sign-up attempt.
   RateLimitResult checkSignup() => _signupBucket.check();
 
-  /// Call before every Claude API call.
-  RateLimitResult checkClaudeApi() => _claudeBucket.check();
+  /// Call before every Claude idea-generation call.
+  RateLimitResult checkClaudeApi() => _ideaBucket.check();
+
+  /// Call before every Claude advice-generation call.
+  RateLimitResult checkAdviceApi() => _adviceBucket.check();
 
   /// Call before sending a password-reset email.
   RateLimitResult checkPasswordReset() => _passwordResetBucket.check();

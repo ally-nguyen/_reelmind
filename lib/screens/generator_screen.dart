@@ -16,7 +16,12 @@ import 'workspace_screen.dart';
 
 class GeneratorScreen extends StatefulWidget {
   final String? extraDirection;
-  const GeneratorScreen({super.key, this.extraDirection});
+  final List<String> initialTags;
+  const GeneratorScreen({
+    super.key,
+    this.extraDirection,
+    this.initialTags = const [],
+  });
 
   @override
   State<GeneratorScreen> createState() => _GeneratorScreenState();
@@ -26,6 +31,7 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
   IdeaModel? _idea;
   bool _isLoading = true;
   bool _hasSignals = false;
+  bool _generationFailed = false;
   Map<String, dynamic>? _signals;
 
   String? get _uid => FirebaseAuth.instance.currentUser?.uid;
@@ -37,14 +43,24 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
   }
 
   Future<void> _loadAndGenerate({String? extraDirection}) async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _generationFailed = false;
+    });
     final uid = _uid;
     if (uid == null) {
       setState(() => _isLoading = false);
       return;
     }
 
-    final signals = _signals ?? await FirestoreService.getSignals(uid);
+    // Fetch signals, existing ideas, and stored advice in parallel.
+    final signalsFuture = _signals != null
+        ? Future.value(_signals)
+        : FirestoreService.getSignals(uid);
+    final ideasFuture = FirestoreService.ideasStream(uid).first;
+    final adviceFuture = FirestoreService.getAIAdvice(uid);
+
+    final signals = await signalsFuture;
     if (signals == null) {
       setState(() {
         _hasSignals = false;
@@ -58,24 +74,20 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
       _hasSignals = true;
     });
 
-    // Build rich summaries of existing ideas so Claude avoids their angles too
-    final existingIdeas = await FirestoreService.ideasStream(uid).first;
-    final storedAdvice = await FirestoreService.getAIAdvice(uid);
+    final existingIdeas = await ideasFuture;
+    final storedAdvice = await adviceFuture;
 
     final existingSummaries = existingIdeas
         .where((i) => i.title.isNotEmpty)
         .map((i) {
           final firstBullet = i.script.isNotEmpty
               ? i.script
-                  .split('\n')
-                  .firstWhere((l) => l.trim().isNotEmpty,
-                      orElse: () => '')
-                  .replaceFirst(RegExp(r'^•\s*'), '')
-                  .trim()
+                    .split('\n')
+                    .firstWhere((l) => l.trim().isNotEmpty, orElse: () => '')
+                    .replaceFirst(RegExp(r'^•\s*'), '')
+                    .trim()
               : '';
-          return firstBullet.isNotEmpty
-              ? '${i.title} — $firstBullet'
-              : i.title;
+          return firstBullet.isNotEmpty ? '${i.title} — $firstBullet' : i.title;
         })
         .toList();
 
@@ -99,18 +111,23 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
             : 'in a moment';
         msg = 'Generation limit reached. $wait.';
       } else if (result.error == ClaudeErrorKind.rateLimitedByApi) {
-        msg = 'AI generation limit reached (10/hour). Try again later.';
+        msg = 'AI generation limit reached. Try again later.';
       } else {
-        msg = 'Could not generate an idea. Check your connection and try again.';
+        msg =
+            'Could not generate an idea. Check your connection and try again.';
       }
+
+      setState(() {
+        _isLoading = false;
+        _generationFailed = true;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(msg), backgroundColor: Colors.red.shade700),
       );
-      setState(() => _isLoading = false);
       return;
     }
 
-    final idea = result.value;
+    final idea = _withInitialTags(result.value);
     setState(() {
       _idea = idea;
       _isLoading = false;
@@ -125,15 +142,35 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
     }
   }
 
+  IdeaModel? _withInitialTags(IdeaModel? idea) {
+    if (idea == null || widget.initialTags.isEmpty) return idea;
+    final tags = {
+      ...idea.tags,
+      ...widget.initialTags.where((tag) => tag.trim().isNotEmpty),
+    }.toList();
+    return IdeaModel(
+      id: idea.id,
+      title: idea.title,
+      script: idea.script,
+      status: idea.status,
+      tags: tags,
+      isAIGenerated: idea.isAIGenerated,
+      archived: idea.archived,
+      createdAt: idea.createdAt,
+      updatedAt: idea.updatedAt,
+    );
+  }
+
   void _showRegenerateSheet() {
     final promptCtrl = TextEditingController();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => Padding(
+      builder: (sheetCtx) => Padding(
         padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom),
+          bottom: MediaQuery.of(sheetCtx).viewInsets.bottom,
+        ),
         child: Container(
           margin: const EdgeInsets.fromLTRB(16, 0, 16, 32),
           padding: const EdgeInsets.all(24),
@@ -156,18 +193,23 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
                   ),
                 ),
               ),
-              Text('Generate another',
-                  style: GoogleFonts.fraunces(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                      color: kText)),
+              Text(
+                'Generate another',
+                style: GoogleFonts.fraunces(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: kText,
+                ),
+              ),
               const SizedBox(height: 6),
               Text(
-                  'Claude will generate a new idea using your saved signals. Add an optional direction to guide it.',
-                  style: GoogleFonts.manrope(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: kMuted)),
+                'Claude will generate a new idea using your saved signals. Add an optional direction to guide it.',
+                style: GoogleFonts.manrope(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: kMuted,
+                ),
+              ),
               const SizedBox(height: 20),
               // SECURITY: maxLength enforced in UI and re-validated before use.
               TextField(
@@ -179,9 +221,10 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
                   hintText:
                       'Optional — add a topic, direction, or constraint...',
                   hintStyle: GoogleFonts.manrope(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: kMuted.withValues(alpha: 0.6)),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: kMuted.withValues(alpha: 0.6),
+                  ),
                   filled: true,
                   fillColor: const Color(0xB8FFFFFF),
                   border: OutlineInputBorder(
@@ -209,32 +252,42 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
                     elevation: 0,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16)),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
                   ),
                   onPressed: () {
                     final direction = promptCtrl.text.trim();
                     // Validate length before forwarding to the API.
-                    final err = InputValidator.validateExtraDirection(direction);
+                    final err = InputValidator.validateExtraDirection(
+                      direction,
+                    );
                     if (err != null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(err)),
-                      );
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text(err)));
                       return;
                     }
                     Navigator.pop(context);
                     _loadAndGenerate(
-                        extraDirection: direction.isEmpty ? null : direction);
+                      extraDirection: direction.isEmpty ? null : direction,
+                    );
                   },
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.auto_awesome,
-                          size: 16, color: Colors.white),
+                      const Icon(
+                        Icons.auto_awesome,
+                        size: 16,
+                        color: Colors.white,
+                      ),
                       const SizedBox(width: 8),
-                      Text('Generate',
-                          style: GoogleFonts.manrope(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700)),
+                      Text(
+                        'Generate',
+                        style: GoogleFonts.manrope(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -257,25 +310,24 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
             child: _isLoading
                 ? _loadingView()
                 : !_hasSignals
-                    ? _noSignalsView(context)
-                    : SingleChildScrollView(
-                        padding:
-                            const EdgeInsets.fromLTRB(18, 0, 18, 130),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _statusBar(),
-                            const SizedBox(height: 4),
-                            _heroCard(),
-                            const SizedBox(height: 16),
-                            _generatedScript(),
-                            const SizedBox(height: 16),
-                            _signalsSummary(),
-                            const SizedBox(height: 16),
-                            _actions(context),
-                          ],
-                        ),
-                      ),
+                ? _noSignalsView(context)
+                : _generationFailed
+                ? _errorView()
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 130),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _heroCard(),
+                        const SizedBox(height: 16),
+                        _generatedScript(),
+                        const SizedBox(height: 16),
+                        _signalsSummary(),
+                        const SizedBox(height: 16),
+                        _actions(context),
+                      ],
+                    ),
+                  ),
           ),
           const AppTabBar(
             active: TabDest.none,
@@ -287,6 +339,76 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
     );
   }
 
+  Widget _errorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_outlined, size: 48, color: kMuted),
+            const SizedBox(height: 16),
+            Text(
+              'Generation failed',
+              style: GoogleFonts.fraunces(
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                color: kText,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Check your connection and try again. Your signals are saved.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.manrope(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: kMuted,
+                height: 1.6,
+              ),
+            ),
+            const SizedBox(height: 24),
+            GestureDetector(
+              onTap: _loadAndGenerate,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 14,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  gradient: const LinearGradient(
+                    colors: [kBrand, Color(0xFFFF7A4C)],
+                  ),
+                ),
+                child: Text(
+                  'Try again',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: _showRegenerateSheet,
+              child: Text(
+                'Add a direction instead',
+                style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: kBrandDeep,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _loadingView() {
     return Center(
       child: Column(
@@ -294,11 +416,14 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
         children: [
           const CircularProgressIndicator(color: kBrand, strokeWidth: 2.5),
           const SizedBox(height: 20),
-          Text('Generating your idea...',
-              style: GoogleFonts.manrope(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: kMuted)),
+          Text(
+            'Generating your idea...',
+            style: GoogleFonts.manrope(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: kMuted,
+            ),
+          ),
         ],
       ),
     );
@@ -313,65 +438,51 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
           children: [
             const Icon(Icons.inbox_outlined, size: 48, color: kMuted),
             const SizedBox(height: 16),
-            Text('No signals imported yet',
-                style: GoogleFonts.fraunces(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: kText)),
+            Text(
+              'No signals imported yet',
+              style: GoogleFonts.fraunces(
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                color: kText,
+              ),
+            ),
             const SizedBox(height: 8),
             Text(
               'Go to the Import tab and add your captions, topics, and creator references so Claude knows what to generate.',
               textAlign: TextAlign.center,
               style: GoogleFonts.manrope(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: kMuted,
-                  height: 1.6),
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: kMuted,
+                height: 1.6,
+              ),
             ),
             const SizedBox(height: 24),
             GestureDetector(
-              onTap: () =>
-                  Navigator.pushReplacementNamed(context, '/connect'),
+              onTap: () => Navigator.pushReplacementNamed(context, '/connect'),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 28, vertical: 14),
+                  horizontal: 28,
+                  vertical: 14,
+                ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(18),
                   gradient: const LinearGradient(
-                      colors: [kBrand, Color(0xFFFF7A4C)]),
+                    colors: [kBrand, Color(0xFFFF7A4C)],
+                  ),
                 ),
-                child: Text('Import signals',
-                    style: GoogleFonts.manrope(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white)),
+                child: Text(
+                  'Import signals',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _statusBar() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text('9:41',
-              style: GoogleFonts.manrope(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: kText)),
-          Row(children: const [
-            Icon(Icons.signal_cellular_alt, size: 16, color: kText),
-            SizedBox(width: 6),
-            Icon(Icons.wifi, size: 16, color: kText),
-            SizedBox(width: 6),
-            Icon(Icons.battery_3_bar, size: 16, color: kText),
-          ]),
-        ],
       ),
     );
   }
@@ -395,10 +506,7 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
           const SizedBox(height: 16),
           Text('GENERATED FOR YOU', style: eyebrowStyle),
           const SizedBox(height: 10),
-          Text(
-            _idea?.title ?? 'Generating...',
-            style: displayTitle(32),
-          ),
+          Text(_idea?.title ?? 'Generating...', style: displayTitle(32)),
           const SizedBox(height: 14),
           Text(
             'Based on your imported captions, creator references, and topic tags. Pre-loaded into the editor for quick tweaking.',
@@ -410,10 +518,8 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
   }
 
   Widget _generatedScript() {
-    final bullets = _idea?.script
-            .split('\n')
-            .where((l) => l.trim().isNotEmpty)
-            .toList() ??
+    final bullets =
+        _idea?.script.split('\n').where((l) => l.trim().isNotEmpty).toList() ??
         [];
 
     return GlassCard(
@@ -427,13 +533,16 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
             children: [
               Flexible(
                 child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Generated script', style: sectionTitle),
-                      const SizedBox(height: 2),
-                      Text('${bullets.length} talking points, ready to refine.',
-                          style: sectionSubtitle),
-                    ]),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Generated script', style: sectionTitle),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${bullets.length} talking points, ready to refine.',
+                      style: sectionSubtitle,
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(width: 12),
               const RmChip(label: 'Script Ready', style: ChipStyle.teal),
@@ -442,12 +551,8 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
           const SizedBox(height: 16),
           ...bullets.asMap().entries.expand((entry) {
             final i = entry.key;
-            final text =
-                entry.value.replaceFirst(RegExp(r'^•\s*'), '').trim();
-            return [
-              if (i > 0) _divider(),
-              _bulletRow('${i + 1}', text),
-            ];
+            final text = entry.value.replaceFirst(RegExp(r'^•\s*'), '').trim();
+            return [if (i > 0) _divider(), _bulletRow('${i + 1}', text)];
           }),
         ],
       ),
@@ -468,20 +573,26 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
               borderRadius: BorderRadius.circular(999),
             ),
             child: Center(
-              child: Text(number,
-                  style: GoogleFonts.manrope(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      color: kBrandDeep)),
+              child: Text(
+                number,
+                style: GoogleFonts.manrope(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: kBrandDeep,
+                ),
+              ),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(text,
-                style: GoogleFonts.manrope(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: kText)),
+            child: Text(
+              text,
+              style: GoogleFonts.manrope(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: kText,
+              ),
+            ),
           ),
         ],
       ),
@@ -491,17 +602,17 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
   Widget _divider() => Container(height: 1, color: const Color(0x140F172A));
 
   Widget _signalsSummary() {
-    final topics =
-        List<String>.from(_signals?['topics'] ?? []);
-    final rawCreators =
-        List<dynamic>.from(_signals?['creators'] ?? []);
-    final creators = rawCreators.map((c) {
-      if (c is String) return c;
-      if (c is Map) return (c['name'] ?? '').toString();
-      return c.toString();
-    }).where((s) => s.isNotEmpty).toList();
-    final captions =
-        List<String>.from(_signals?['captions'] ?? []);
+    final topics = List<String>.from(_signals?['topics'] ?? []);
+    final rawCreators = List<dynamic>.from(_signals?['creators'] ?? []);
+    final creators = rawCreators
+        .map((c) {
+          if (c is String) return c;
+          if (c is Map) return (c['name'] ?? '').toString();
+          return c.toString();
+        })
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final captions = List<String>.from(_signals?['captions'] ?? []);
 
     return GlassCard(
       padding: const EdgeInsets.all(18),
@@ -514,13 +625,16 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
             children: [
               Flexible(
                 child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Signals used', style: sectionTitle),
-                      const SizedBox(height: 2),
-                      Text('What Claude based this idea on.',
-                          style: sectionSubtitle),
-                    ]),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Signals used', style: sectionTitle),
+                    const SizedBox(height: 2),
+                    Text(
+                      'What Claude based this idea on.',
+                      style: sectionSubtitle,
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(width: 12),
               const RmChip(label: 'Your profile'),
@@ -534,21 +648,26 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('TOPICS',
-                          style: GoogleFonts.manrope(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.6,
-                              color: const Color(0xFF94A3B8))),
+                      Text(
+                        'TOPICS',
+                        style: GoogleFonts.manrope(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.6,
+                          color: const Color(0xFF94A3B8),
+                        ),
+                      ),
                       const SizedBox(height: 8),
                       Text(
-                          topics.isEmpty
-                              ? 'None added'
-                              : topics.take(3).join(', '),
-                          style: GoogleFonts.manrope(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                              color: kText)),
+                        topics.isEmpty
+                            ? 'None added'
+                            : topics.take(3).join(', '),
+                        style: GoogleFonts.manrope(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: kText,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -559,21 +678,26 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('CREATORS',
-                          style: GoogleFonts.manrope(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.6,
-                              color: const Color(0xFF94A3B8))),
+                      Text(
+                        'CREATORS',
+                        style: GoogleFonts.manrope(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.6,
+                          color: const Color(0xFF94A3B8),
+                        ),
+                      ),
                       const SizedBox(height: 8),
                       Text(
-                          creators.isEmpty
-                              ? 'None added'
-                              : creators.take(2).join(', '),
-                          style: GoogleFonts.manrope(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                              color: kText)),
+                        creators.isEmpty
+                            ? 'None added'
+                            : creators.take(2).join(', '),
+                        style: GoogleFonts.manrope(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: kText,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -586,19 +710,24 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('CAPTIONS',
-                      style: GoogleFonts.manrope(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.6,
-                          color: const Color(0xFF94A3B8))),
+                  Text(
+                    'CAPTIONS',
+                    style: GoogleFonts.manrope(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.6,
+                      color: const Color(0xFF94A3B8),
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Text(
-                      '${captions.length} caption${captions.length == 1 ? '' : 's'} analyzed',
-                      style: GoogleFonts.manrope(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                          color: kText)),
+                    '${captions.length} caption${captions.length == 1 ? '' : 's'} analyzed',
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: kText,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -619,41 +748,48 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
               onTap: _idea == null
                   ? null
                   : () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) =>
-                                WorkspaceScreen(idea: _idea)),
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => WorkspaceScreen(idea: _idea),
                       ),
+                    ),
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 15),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
                   gradient: LinearGradient(
                     colors: [
-                      kBrand.withValues(
-                          alpha: _idea == null ? 0.5 : 1.0),
-                      const Color(0xFFFF7A4C).withValues(
-                          alpha: _idea == null ? 0.5 : 1.0),
+                      kBrand.withValues(alpha: _idea == null ? 0.5 : 1.0),
+                      const Color(
+                        0xFFFF7A4C,
+                      ).withValues(alpha: _idea == null ? 0.5 : 1.0),
                     ],
                   ),
                   boxShadow: const [
                     BoxShadow(
-                        color: Color(0x47FF6B57),
-                        blurRadius: 28,
-                        offset: Offset(0, 16)),
+                      color: Color(0x47FF6B57),
+                      blurRadius: 28,
+                      offset: Offset(0, 16),
+                    ),
                   ],
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.edit_outlined,
-                        color: Colors.white, size: 16),
+                    const Icon(
+                      Icons.edit_outlined,
+                      color: Colors.white,
+                      size: 16,
+                    ),
                     const SizedBox(width: 8),
-                    Text('Tweak in editor',
-                        style: GoogleFonts.manrope(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white)),
+                    Text(
+                      'Tweak in editor',
+                      style: GoogleFonts.manrope(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -675,11 +811,14 @@ class _GeneratorScreenState extends State<GeneratorScreen> {
                   children: [
                     const Icon(Icons.refresh, color: kText, size: 16),
                     const SizedBox(width: 8),
-                    Text('Generate another',
-                        style: GoogleFonts.manrope(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            color: kText)),
+                    Text(
+                      'Generate another',
+                      style: GoogleFonts.manrope(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: kText,
+                      ),
+                    ),
                   ],
                 ),
               ),

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import '../models/idea_model.dart';
 import '../models/saved_advice_model.dart';
+import '../models/try_next_insight.dart';
 
 class FirestoreService {
   static final _db = FirebaseFirestore.instance;
@@ -12,14 +13,17 @@ class FirestoreService {
     await _db.collection('users').doc(uid).set({
       'email': email,
       'createdAt': FieldValue.serverTimestamp(),
-      'tutorialSeen': false,   // only set on first creation; merge won't overwrite later
+      'tutorialSeen':
+          false, // only set on first creation; merge won't overwrite later
     }, SetOptions(merge: true));
   }
 
   static Future<bool> hasTutorialBeenSeen(String uid) async {
     final doc = await _db.collection('users').doc(uid).get();
     final data = doc.data();
-    if (data == null || !data.containsKey('tutorialSeen')) return true; // existing user — skip
+    if (data == null || !data.containsKey('tutorialSeen')) {
+      return true; // existing user — skip
+    }
     return data['tutorialSeen'] == true;
   }
 
@@ -30,7 +34,8 @@ class FirestoreService {
   // ── Signals ───────────────────────────────────────────────────────────────
 
   // Full save (used by ImportSignalsScreen after editing)
-  static Future<void> saveSignals(String uid, {
+  static Future<void> saveSignals(
+    String uid, {
     required List<String> captions,
     required List<String> topics,
     required List<Map<String, String>> creators,
@@ -49,8 +54,7 @@ class FirestoreService {
 
   // Per-step saves (used by onboarding survey — dot-notation updates only
   // the targeted field, leaving all other signals fields intact)
-  static Future<void> saveSurveyTopics(
-      String uid, List<String> topics) async {
+  static Future<void> saveSurveyTopics(String uid, List<String> topics) async {
     await _db.collection('users').doc(uid).update({
       'signals.topics': topics,
       'signals.updatedAt': FieldValue.serverTimestamp(),
@@ -58,7 +62,9 @@ class FirestoreService {
   }
 
   static Future<void> saveSurveyCaptions(
-      String uid, List<String> captions) async {
+    String uid,
+    List<String> captions,
+  ) async {
     await _db.collection('users').doc(uid).update({
       'signals.captions': captions,
       'signals.updatedAt': FieldValue.serverTimestamp(),
@@ -66,7 +72,9 @@ class FirestoreService {
   }
 
   static Future<void> saveSurveyCreators(
-      String uid, List<Map<String, String>> creators) async {
+    String uid,
+    List<Map<String, String>> creators,
+  ) async {
     await _db.collection('users').doc(uid).update({
       'signals.creators': creators,
       'signals.updatedAt': FieldValue.serverTimestamp(),
@@ -74,7 +82,9 @@ class FirestoreService {
   }
 
   static Future<void> saveSurveyVideos(
-      String uid, List<Map<String, String>> videos) async {
+    String uid,
+    List<Map<String, String>> videos,
+  ) async {
     await _db.collection('users').doc(uid).update({
       'signals.videos': videos,
       'signals.updatedAt': FieldValue.serverTimestamp(),
@@ -88,10 +98,9 @@ class FirestoreService {
   }
 
   static Future<void> saveAIAdvice(String uid, String advice) async {
-    await _db.collection('users').doc(uid).set(
-      {'aiAdvice': advice},
-      SetOptions(merge: true),
-    );
+    await _db.collection('users').doc(uid).set({
+      'aiAdvice': advice,
+    }, SetOptions(merge: true));
   }
 
   static Future<String?> getAIAdvice(String uid) async {
@@ -99,14 +108,35 @@ class FirestoreService {
     return doc.data()?['aiAdvice'] as String?;
   }
 
-  static CollectionReference<Map<String, dynamic>> _savedAdviceRef(String uid) =>
-      _db.collection('users').doc(uid).collection('savedAdvice');
+  static Future<void> saveTryNextInsight(
+    String uid,
+    TryNextInsight insight,
+  ) async {
+    await _db.collection('users').doc(uid).set({
+      'tryNextInsight': {
+        ...insight.toMap(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+    }, SetOptions(merge: true));
+  }
+
+  static Future<TryNextInsight?> getTryNextInsight(String uid) async {
+    final doc = await _db.collection('users').doc(uid).get();
+    final raw = doc.data()?['tryNextInsight'];
+    if (raw is! Map) return null;
+    return TryNextInsight.fromJson({
+      for (final entry in raw.entries) entry.key.toString(): entry.value,
+    });
+  }
+
+  static CollectionReference<Map<String, dynamic>> _savedAdviceRef(
+    String uid,
+  ) => _db.collection('users').doc(uid).collection('savedAdvice');
 
   static Future<void> addSavedAdvice(String uid, String text) async {
-    await _savedAdviceRef(uid).add({
-      'text': text,
-      'savedAt': FieldValue.serverTimestamp(),
-    });
+    await _savedAdviceRef(
+      uid,
+    ).add({'text': text, 'savedAt': FieldValue.serverTimestamp()});
   }
 
   static Stream<List<SavedAdviceModel>> savedAdviceStream(String uid) {
@@ -117,10 +147,9 @@ class FirestoreService {
   }
 
   static Future<List<String>> getSavedAdviceTexts(String uid) async {
-    final snap = await _savedAdviceRef(uid)
-        .orderBy('savedAt', descending: true)
-        .limit(8)
-        .get();
+    final snap = await _savedAdviceRef(
+      uid,
+    ).orderBy('savedAt', descending: true).limit(8).get();
     return snap.docs
         .map((d) => (d.data()['text'] as String?) ?? '')
         .where((t) => t.isNotEmpty)
@@ -145,17 +174,18 @@ class FirestoreService {
     return _ideasRef(uid)
         .orderBy('updatedAt', descending: true)
         .snapshots()
-        .map((snap) => snap.docs
-            .map(IdeaModel.fromDoc)
-            .where((i) => !i.archived)
-            .toList());
+        .map(
+          (snap) => snap.docs
+              .map(IdeaModel.fromDoc)
+              .where((i) => !i.archived)
+              .toList(),
+        );
   }
 
   static Stream<List<IdeaModel>> archivedIdeasStream(String uid) {
-    return _ideasRef(uid)
-        .where('archived', isEqualTo: true)
-        .snapshots()
-        .map((snap) {
+    return _ideasRef(uid).where('archived', isEqualTo: true).snapshots().map((
+      snap,
+    ) {
       final list = snap.docs.map(IdeaModel.fromDoc).toList();
       list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return list;
@@ -194,10 +224,13 @@ class FirestoreService {
   }
 
   static Future<void> updateIdea(
-      String uid, String ideaId, Map<String, dynamic> data) async {
-    await _ideasRef(uid)
-        .doc(ideaId)
-        .update({...data, 'updatedAt': FieldValue.serverTimestamp()});
+    String uid,
+    String ideaId,
+    Map<String, dynamic> data,
+  ) async {
+    await _ideasRef(
+      uid,
+    ).doc(ideaId).update({...data, 'updatedAt': FieldValue.serverTimestamp()});
   }
 
   static Future<void> deleteIdea(String uid, String ideaId) async {
@@ -215,10 +248,7 @@ class FirestoreService {
   /// separately (after re-authentication if required).
   static Future<void> deleteAllUserData(String uid) async {
     // Run Firestore and Storage deletions in parallel.
-    await Future.wait([
-      _deleteFirestoreData(uid),
-      _deleteStorageData(uid),
-    ]);
+    await Future.wait([_deleteFirestoreData(uid), _deleteStorageData(uid)]);
   }
 
   static Future<void> _deleteFirestoreData(String uid) async {

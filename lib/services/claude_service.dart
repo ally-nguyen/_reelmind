@@ -18,12 +18,18 @@
 
 import 'package:cloud_functions/cloud_functions.dart';
 import '../models/idea_model.dart';
+import '../models/try_next_insight.dart';
 import '../services/rate_limiter.dart';
 import '../utils/input_validator.dart';
 
 // ── Typed result ──────────────────────────────────────────────────────────────
 
-enum ClaudeErrorKind { rateLimitedLocally, rateLimitedByApi, networkError, unknown }
+enum ClaudeErrorKind {
+  rateLimitedLocally,
+  rateLimitedByApi,
+  networkError,
+  unknown,
+}
 
 class ClaudeResult<T> {
   final T? value;
@@ -48,13 +54,14 @@ class ClaudeService {
   static const int _promptExistingSummaryLength = 140;
   static const int _promptExistingSummaryCount = 12;
   static const int _promptExtraDirectionLength = 200;
+  static const int _promptPostedIdeaCount = 20;
+  static const int _promptPostedScriptLength = 500;
 
   // Lazily obtain a reference to the deployed Cloud Function.
-  static HttpsCallable get _fn =>
-      FirebaseFunctions.instance.httpsCallable(
-        'callClaude',
-        options: HttpsCallableOptions(timeout: const Duration(seconds: 60)),
-      );
+  static HttpsCallable get _fn => FirebaseFunctions.instance.httpsCallable(
+    'callClaude',
+    options: HttpsCallableOptions(timeout: const Duration(seconds: 60)),
+  );
 
   // ── Generate idea from import signals ──────────────────────────────────────
 
@@ -78,7 +85,12 @@ class ClaudeService {
         .toList();
 
     final safeCreators = creators
-        .map((c) => InputValidator.sanitizeAndTruncate(c, InputValidator.maxCreatorNameLength))
+        .map(
+          (c) => InputValidator.sanitizeAndTruncate(
+            c,
+            InputValidator.maxCreatorNameLength,
+          ),
+        )
         .where((c) => c.isNotEmpty)
         .take(_promptCreatorCount)
         .toList();
@@ -153,13 +165,17 @@ class ClaudeService {
       'topics': topics,
       'creators': rawCreators,
       'existingSummaries': existingSummaries
-          .map((s) => InputValidator.sanitizeAndTruncate(s, _promptExistingSummaryLength))
+          .map(
+            (s) => InputValidator.sanitizeAndTruncate(
+              s,
+              _promptExistingSummaryLength,
+            ),
+          )
           .take(_promptExistingSummaryCount)
           .toList(),
       if (safeDirection != null && safeDirection.isNotEmpty)
         'extraDirection': safeDirection,
-      if (safeAdvice != null && safeAdvice.isNotEmpty)
-        'aiAdvice': safeAdvice,
+      if (safeAdvice != null && safeAdvice.isNotEmpty) 'aiAdvice': safeAdvice,
     });
   }
 
@@ -283,11 +299,78 @@ class ClaudeService {
     });
   }
 
+  // ── What to Try Next ──────────────────────────────────────────────────────
+
+  static Future<ClaudeResult<TryNextInsight>> getTryNextInsightResult({
+    required List<IdeaModel> postedIdeas,
+    required List<String> topics,
+    required String sourceSignature,
+    Map<String, dynamic>? signals,
+  }) async {
+    final safeTopics = topics
+        .map((t) => InputValidator.sanitizeAndTruncate(t, _promptTopicLength))
+        .where((t) => t.isNotEmpty)
+        .take(_promptTopicCount)
+        .toList();
+
+    final payloadIdeas = postedIdeas
+        .where((idea) => idea.id != null)
+        .take(_promptPostedIdeaCount)
+        .map((idea) {
+          final safeTags = idea.tags
+              .map(
+                (t) =>
+                    InputValidator.sanitizeAndTruncate(t, _promptTopicLength),
+              )
+              .where((t) => t.isNotEmpty)
+              .take(6)
+              .toList();
+          return {
+            'id': idea.id,
+            'title': InputValidator.sanitizeAndTruncate(idea.title, 160),
+            'script': InputValidator.sanitizeAndTruncate(
+              idea.script,
+              _promptPostedScriptLength,
+            ),
+            'tags': safeTags,
+          };
+        })
+        .toList();
+
+    final captions = List<String>.from(signals?['captions'] ?? [])
+        .map((c) => InputValidator.sanitizeAndTruncate(c, _promptCaptionLength))
+        .where((c) => c.isNotEmpty)
+        .take(3)
+        .toList();
+
+    final result = await _callMapFunction({
+      'mode': 'getTryNextInsight',
+      'topics': safeTopics,
+      'captions': captions,
+      'postedIdeas': payloadIdeas,
+      'sourceSignature': InputValidator.sanitizeAndTruncate(
+        sourceSignature,
+        80,
+      ),
+    });
+
+    if (!result.isOk) {
+      return ClaudeResult.err(result.error, retryAfter: result.retryAfter);
+    }
+
+    final insight = TryNextInsight.fromJson(
+      result.value ?? const {},
+      fallbackSourceSignature: sourceSignature,
+    );
+    return ClaudeResult.ok(insight);
+  }
+
   // ── Shared call helpers ────────────────────────────────────────────────────
 
   /// Call the function and expect an IdeaModel in the response.
   static Future<ClaudeResult<IdeaModel>> _callIdeaFunction(
-      Map<String, dynamic> payload) async {
+    Map<String, dynamic> payload,
+  ) async {
     final rl = RateLimiter.instance.checkClaudeApi();
     if (!rl.allowed) {
       return ClaudeResult.err(
@@ -313,8 +396,9 @@ class ClaudeService {
 
   /// Call the function and expect a plain text string in the response.
   static Future<ClaudeResult<String>> _callTextFunction(
-      Map<String, dynamic> payload) async {
-    final rl = RateLimiter.instance.checkClaudeApi();
+    Map<String, dynamic> payload,
+  ) async {
+    final rl = RateLimiter.instance.checkAdviceApi();
     if (!rl.allowed) {
       return ClaudeResult.err(
         ClaudeErrorKind.rateLimitedLocally,
@@ -325,6 +409,33 @@ class ClaudeService {
       final result = await _fn.call(payload);
       final data = result.data as Map<dynamic, dynamic>;
       return ClaudeResult.ok(data['text'] as String?);
+    } on FirebaseFunctionsException catch (e) {
+      return ClaudeResult.err(_mapFnError(e.code));
+    } catch (_) {
+      return const ClaudeResult.err(ClaudeErrorKind.networkError);
+    }
+  }
+
+  /// Call the function and expect a JSON-like map in the response.
+  static Future<ClaudeResult<Map<String, dynamic>>> _callMapFunction(
+    Map<String, dynamic> payload,
+  ) async {
+    final rl = RateLimiter.instance.checkAdviceApi();
+    if (!rl.allowed) {
+      return ClaudeResult.err(
+        ClaudeErrorKind.rateLimitedLocally,
+        retryAfter: rl.retryAfter,
+      );
+    }
+    try {
+      final result = await _fn.call(payload);
+      final data = result.data;
+      if (data is Map) {
+        return ClaudeResult.ok({
+          for (final entry in data.entries) entry.key.toString(): entry.value,
+        });
+      }
+      return const ClaudeResult.err(ClaudeErrorKind.networkError);
     } on FirebaseFunctionsException catch (e) {
       return ClaudeResult.err(_mapFnError(e.code));
     } catch (_) {

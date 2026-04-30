@@ -32,8 +32,20 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
 
     if (diff == 0) return 'Today at $time';
     if (diff == 1) return 'Yesterday at $time';
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     final label = '${months[dt.month - 1]} ${dt.day}';
     return dt.year == now.year ? '$label at $time' : '$label, ${dt.year}';
   }
@@ -75,25 +87,34 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(color: const Color(0x140F172A)),
                           ),
-                          child: const Icon(Icons.arrow_back_ios_new_rounded,
-                              size: 16, color: kText),
+                          child: const Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            size: 16,
+                            color: kText,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 14),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('SAVED ADVICE',
-                              style: GoogleFonts.manrope(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 1.8,
-                                  color: kBrandDeep)),
-                          Text('Your bookmarked AI insights',
-                              style: GoogleFonts.manrope(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: kText)),
+                          Text(
+                            'SAVED INSIGHTS',
+                            style: GoogleFonts.manrope(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.8,
+                              color: kBrandDeep,
+                            ),
+                          ),
+                          Text(
+                            'Your bookmarked creator insights',
+                            style: GoogleFonts.manrope(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: kText,
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -106,7 +127,8 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                       : StreamBuilder<List<SavedAdviceModel>>(
                           stream: FirestoreService.savedAdviceStream(uid),
                           builder: (context, snap) {
-                            if (snap.connectionState == ConnectionState.waiting) {
+                            if (snap.connectionState ==
+                                ConnectionState.waiting) {
                               return const Center(
                                 child: CircularProgressIndicator(color: kBrand),
                               );
@@ -114,28 +136,37 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                             final items = snap.data ?? [];
                             if (items.isEmpty) {
                               return Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 18),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 18,
+                                ),
                                 child: GlassCard(
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      const Icon(Icons.bookmark_outline,
-                                          size: 36, color: kMuted),
+                                      const Icon(
+                                        Icons.bookmark_outline,
+                                        size: 36,
+                                        color: kMuted,
+                                      ),
                                       const SizedBox(height: 12),
-                                      Text('No saved advice yet',
-                                          style: GoogleFonts.manrope(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w700,
-                                              color: kText)),
+                                      Text(
+                                        'No saved insights yet',
+                                        style: GoogleFonts.manrope(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                          color: kText,
+                                        ),
+                                      ),
                                       const SizedBox(height: 6),
                                       Text(
-                                        'Tap "Save advice" on the profile screen to bookmark advice you want to keep.',
+                                        'Tap "Save insight" on the profile screen to bookmark guidance you want to keep.',
                                         textAlign: TextAlign.center,
                                         style: GoogleFonts.manrope(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w500,
-                                            color: kMuted,
-                                            height: 1.5),
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                          color: kMuted,
+                                          height: 1.5,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -143,10 +174,17 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                               );
                             }
                             return ListView.separated(
-                              padding: const EdgeInsets.fromLTRB(18, 0, 18, 120),
+                              padding: const EdgeInsets.fromLTRB(
+                                18,
+                                0,
+                                18,
+                                120,
+                              ),
                               itemCount: items.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 12),
-                              itemBuilder: (context, i) => _adviceCard(items[i]),
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 12),
+                              itemBuilder: (context, i) =>
+                                  _adviceCard(items[i]),
                             );
                           },
                         ),
@@ -161,16 +199,26 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
 
   Widget _adviceCard(SavedAdviceModel item) {
     final baseStyle = GoogleFonts.manrope(
-        fontSize: 14, fontWeight: FontWeight.w500, color: kText, height: 1.7);
+      fontSize: 14,
+      fontWeight: FontWeight.w500,
+      color: kText,
+      height: 1.7,
+    );
     final boldStyle = GoogleFonts.manrope(
-        fontSize: 14, fontWeight: FontWeight.w800, color: kText, height: 1.7);
+      fontSize: 14,
+      fontWeight: FontWeight.w800,
+      color: kText,
+      height: 1.7,
+    );
 
     final spans = <InlineSpan>[];
     for (final line in item.text.trim().split('\n')) {
       if (spans.isNotEmpty) spans.add(const TextSpan(text: '\n'));
       final colon = line.indexOf(':');
       if (colon > 0) {
-        spans.add(TextSpan(text: line.substring(0, colon + 1), style: boldStyle));
+        spans.add(
+          TextSpan(text: line.substring(0, colon + 1), style: boldStyle),
+        );
         spans.add(TextSpan(text: line.substring(colon + 1), style: baseStyle));
       } else {
         spans.add(TextSpan(text: line, style: baseStyle));
@@ -195,9 +243,10 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                   Text(
                     _formatDate(item.savedAt),
                     style: GoogleFonts.manrope(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: kMuted),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: kMuted,
+                    ),
                   ),
                 ],
               ),
@@ -208,19 +257,27 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                         width: 14,
                         height: 14,
                         child: CircularProgressIndicator(
-                            strokeWidth: 1.5, color: kMuted),
+                          strokeWidth: 1.5,
+                          color: kMuted,
+                        ),
                       )
                     : Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.bookmark_remove_outlined,
-                              size: 14, color: kMuted),
+                          const Icon(
+                            Icons.bookmark_remove_outlined,
+                            size: 14,
+                            color: kMuted,
+                          ),
                           const SizedBox(width: 3),
-                          Text('Unsave',
-                              style: GoogleFonts.manrope(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: kMuted)),
+                          Text(
+                            'Unsave',
+                            style: GoogleFonts.manrope(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: kMuted,
+                            ),
+                          ),
                         ],
                       ),
               ),

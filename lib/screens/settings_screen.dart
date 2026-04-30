@@ -114,13 +114,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Text('Settings',
               style: GoogleFonts.fraunces(
                   fontSize: 26, fontWeight: FontWeight.w700, color: kText)),
-          Row(children: const [
-            Icon(Icons.signal_cellular_alt, size: 16, color: kText),
-            SizedBox(width: 6),
-            Icon(Icons.wifi, size: 16, color: kText),
-            SizedBox(width: 6),
-            Icon(Icons.battery_full, size: 16, color: kText),
-          ]),
         ],
       ),
     );

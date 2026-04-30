@@ -44,21 +44,37 @@ const LIMITS = {
   maxExtraDirectionLength: 200,
   maxExistingSummaryLength: 140,
   maxExistingSummaryCount: 12,
+  maxPostedIdeaTitleLength: 160,
+  maxPostedIdeaScriptLength: 500,
+  maxPostedIdeaCount: 20,
   maxPromptLength: 32000, // hard cap on the assembled prompt before sending
 };
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
-// 10 Claude API calls per user per hour — tracked in Firestore so it persists
-// across sessions and devices (unlike the client-side limiter).
+// Two independent sliding-window buckets, mirroring the client-side split:
+//   claudeApi  — idea generation (generateFromSignals, generateAvoidingExisting)
+//   adviceApi  — advice + script assist (getAIAdvice, getTryNextInsight, assistScript)
+// Tracked in Firestore so limits persist across sessions and devices.
 
-const RATE_LIMIT_MAX = 10;
-const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const RATE_LIMITS = {
+  claudeApi: { max: 10, windowMs: 60 * 60 * 1000 },
+  adviceApi: { max: 20, windowMs: 60 * 60 * 1000 },
+};
+
+function bucketForMode(mode) {
+  return mode === "getAIAdvice" ||
+    mode === "assistScript" ||
+    mode === "getTryNextInsight"
+    ? "adviceApi"
+    : "claudeApi";
+}
 
 /**
  * Returns true if the call is allowed, false if the user is over limit.
- * Writes a new timestamp into users/{uid}/rateLimits.claudeApi.
+ * Writes a new timestamp into users/{uid}/rateLimits.<bucket>.
  */
-async function checkRateLimit(uid) {
+async function checkRateLimit(uid, bucket) {
+  const { max, windowMs } = RATE_LIMITS[bucket];
   const db = admin.firestore();
   const ref = db.collection("users").doc(uid);
 
@@ -66,21 +82,21 @@ async function checkRateLimit(uid) {
     const snap = await tx.get(ref);
     const data = snap.data() || {};
     const now = Date.now();
-    const cutoff = now - RATE_LIMIT_WINDOW_MS;
+    const cutoff = now - windowMs;
 
     // Prune timestamps outside the sliding window.
-    const timestamps = ((data.rateLimits || {}).claudeApi || []).filter(
+    const timestamps = ((data.rateLimits || {})[bucket] || []).filter(
       (t) => t > cutoff
     );
 
-    if (timestamps.length >= RATE_LIMIT_MAX) {
+    if (timestamps.length >= max) {
       return false; // over limit
     }
 
     timestamps.push(now);
     tx.set(
       ref,
-      { rateLimits: { claudeApi: timestamps } },
+      { rateLimits: { [bucket]: timestamps } },
       { merge: true }
     );
     return true;
@@ -160,8 +176,36 @@ function validatePayload(data) {
     .map((t) => sanitizeTruncate(String(t), LIMITS.maxTopicLength))
     .filter((t) => t.length > 0);
 
+  const postedIdeas = (Array.isArray(data.postedIdeas) ? data.postedIdeas : [])
+    .slice(0, LIMITS.maxPostedIdeaCount)
+    .map((idea) => {
+      if (!idea || typeof idea !== "object") return null;
+      const tags = (Array.isArray(idea.tags) ? idea.tags : [])
+        .slice(0, 8)
+        .map((t) => sanitizeTruncate(String(t), LIMITS.maxTopicLength))
+        .filter((t) => t.length > 0);
+      return {
+        id: sanitizeTruncate(String(idea.id || ""), 80),
+        title: sanitizeTruncate(String(idea.title || ""), LIMITS.maxPostedIdeaTitleLength),
+        script: sanitizeTruncate(String(idea.script || ""), LIMITS.maxPostedIdeaScriptLength),
+        tags,
+      };
+    })
+    .filter((idea) => idea && idea.id.length > 0);
+
+  const sourceSignature =
+    typeof data.sourceSignature === "string"
+      ? sanitizeTruncate(data.sourceSignature, 80)
+      : "";
+
   // mode controls which prompt template to use
-  const validModes = ["generateFromSignals", "generateAvoidingExisting", "assistScript", "getAIAdvice"];
+  const validModes = [
+    "generateFromSignals",
+    "generateAvoidingExisting",
+    "assistScript",
+    "getAIAdvice",
+    "getTryNextInsight",
+  ];
   const mode = validModes.includes(data.mode) ? data.mode : "generateAvoidingExisting";
 
   const title =
@@ -174,7 +218,21 @@ function validatePayload(data) {
       ? sanitizeTruncate(data.currentScript, 10000)
       : "";
 
-  return { captions, topics, creators, existingSummaries, extraDirection, aiAdvice, previousAdvice, uncoveredTopics, mode, title, currentScript };
+  return {
+    captions,
+    topics,
+    creators,
+    existingSummaries,
+    extraDirection,
+    aiAdvice,
+    previousAdvice,
+    uncoveredTopics,
+    postedIdeas,
+    sourceSignature,
+    mode,
+    title,
+    currentScript,
+  };
 }
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
@@ -208,14 +266,14 @@ function buildSignalsParts({ captions, topics, creators, extraDirection }) {
 }
 
 function promptGenerateIdea(parts, avoidSection, aiAdvice) {
-  const adviceSection = aiAdvice
-    ? `\n\nAI ADVICE FOR THIS CREATOR — factor this strategic guidance into the idea you generate:\n${aiAdvice}`
+  const guidanceSection = aiAdvice
+    ? `\n\nCREATOR INSIGHTS FOR THIS GENERATION — apply this as a creative direction rule, not as criticism of prior ideas:\n${aiAdvice}`
     : "";
 
   return `You are a content strategy AI helping a short-form video creator develop their next short-form video idea.
 
 ${parts.join("\n\n")}
-${avoidSection}${adviceSection}
+${avoidSection}${guidanceSection}
 
 Using the signals above, generate ONE compelling video idea. Follow these rules strictly:
 
@@ -233,7 +291,7 @@ Using the signals above, generate ONE compelling video idea. Follow these rules 
 
 7. AUTHENTICITY — Specific and personal to this creator.
 
-8. AI ADVICE — If AI advice is provided above, prioritise the topic/angle it recommends when it fits the creator's signals.
+8. CREATOR INSIGHTS — If generation guidance is provided above, apply it to keep the next idea fresh, varied, and aligned with the creator's style.
 
 Return ONLY valid JSON — no markdown, no explanation:
 {
@@ -273,6 +331,128 @@ Script tip: [one sentence identifying the most impactful improvement they could 
 ${contentGapInstruction}
 
 Be specific, not generic. Reference their actual topics and pipeline where possible.`;
+}
+
+function promptGetTryNextInsight({ postedIdeas, topics, captions, sourceSignature }) {
+  const topicList = topics.join(", ");
+  const captionsLine = captions.length > 0
+    ? "Voice samples:\n" + captions.slice(0, 3).map((c) => `- ${c}`).join("\n")
+    : "";
+  const postedSection = postedIdeas
+    .map((idea) => {
+      const tagText = idea.tags.length > 0 ? idea.tags.join(", ") : "none selected";
+      return `- id: ${idea.id}\n  title: ${idea.title}\n  saved topic tags: ${tagText}\n  script: ${idea.script}`;
+    })
+    .join("\n");
+
+  return `You are a content strategy AI for a short-form video creator.
+
+Saved topics you are allowed to use: ${topicList}
+${captionsLine}
+
+Posted scripts to analyze:
+${postedSection}
+
+Task:
+1. For each posted script with no saved topic tag, infer exactly one topic from the allowed saved topics. Do not invent topics.
+2. Count posted topic frequency using saved tags plus your inferred tags. If a script has multiple saved topic tags, count all of them.
+3. Choose the anchor topic with the highest final frequency.
+4. Create exactly 4 clickable directions:
+   - one same-topic hook under the anchor topic.
+   - three bridge hooks that connect a different saved topic to the anchor topic.
+   - if there are fewer than 2 saved topics, create one same-topic hook plus three fallback angle hooks under the anchor topic.
+
+Return ONLY valid JSON, no markdown:
+{
+  "sourceSignature": "${sourceSignature}",
+  "pattern": "one specific sentence about what their posted scripts show",
+  "anchorTopic": "one allowed saved topic",
+  "topicCounts": { "Allowed Topic": 2 },
+  "inferredTags": [
+    { "ideaId": "posted idea id", "topic": "one allowed saved topic", "confidence": 0.82 }
+  ],
+  "hooks": [
+    {
+      "type": "sameTopic",
+      "label": "short action label",
+      "hook": "short hook the user could open with",
+      "targetTopic": "allowed saved topic the new idea should be tagged with",
+      "bridgeTopic": "",
+      "reason": "short reason this direction helps",
+      "generationDirection": "instruction for generating one new idea from this hook"
+    }
+  ]
+}
+
+Rules:
+- Use only the exact allowed saved topic strings.
+- generationDirection must include the hook and target topic.
+- Hooks should be specific, not generic templates.
+- Do not criticize the creator; frame this as a next move.`;
+}
+
+function normalizeTryNextResponse(parsed, { topics, postedIdeas, sourceSignature }) {
+  const topicSet = new Set(topics);
+  const postedIds = new Set(postedIdeas.map((idea) => idea.id));
+
+  const rawCounts = parsed && typeof parsed.topicCounts === "object" && !Array.isArray(parsed.topicCounts)
+    ? parsed.topicCounts
+    : {};
+  const topicCounts = {};
+  topics.forEach((topic) => {
+    const n = Number(rawCounts[topic] || 0);
+    topicCounts[topic] = Number.isFinite(n) && n > 0 ? Math.min(Math.round(n), 999) : 0;
+  });
+
+  const inferredTags = (Array.isArray(parsed?.inferredTags) ? parsed.inferredTags : [])
+    .slice(0, LIMITS.maxPostedIdeaCount)
+    .map((tag) => ({
+      ideaId: sanitizeTruncate(String(tag?.ideaId || ""), 80),
+      topic: sanitizeTruncate(String(tag?.topic || ""), LIMITS.maxTopicLength),
+      confidence: Number(tag?.confidence || 0),
+    }))
+    .filter((tag) => postedIds.has(tag.ideaId) && topicSet.has(tag.topic))
+    .map((tag) => ({
+      ...tag,
+      confidence: Math.max(0, Math.min(1, tag.confidence)),
+    }));
+
+  const hooks = (Array.isArray(parsed?.hooks) ? parsed.hooks : [])
+    .slice(0, 4)
+    .map((hook) => {
+      const targetTopic = sanitizeTruncate(String(hook?.targetTopic || ""), LIMITS.maxTopicLength);
+      const bridgeTopic = sanitizeTruncate(String(hook?.bridgeTopic || ""), LIMITS.maxTopicLength);
+      return {
+        type: sanitizeTruncate(String(hook?.type || ""), 30),
+        label: sanitizeTruncate(String(hook?.label || ""), 80),
+        hook: sanitizeTruncate(String(hook?.hook || ""), 160),
+        targetTopic,
+        bridgeTopic,
+        reason: sanitizeTruncate(String(hook?.reason || ""), 160),
+        generationDirection: sanitizeTruncate(
+          String(hook?.generationDirection || ""),
+          LIMITS.maxExtraDirectionLength
+        ),
+      };
+    })
+    .filter((hook) =>
+      hook.label &&
+      hook.hook &&
+      hook.generationDirection &&
+      topicSet.has(hook.targetTopic) &&
+      (!hook.bridgeTopic || topicSet.has(hook.bridgeTopic))
+    );
+
+  const anchorTopic = topicSet.has(parsed?.anchorTopic) ? parsed.anchorTopic : (topics[0] || "");
+
+  return {
+    sourceSignature,
+    pattern: sanitizeTruncate(String(parsed?.pattern || ""), 220),
+    anchorTopic,
+    topicCounts,
+    inferredTags,
+    hooks,
+  };
 }
 
 function promptAssistScript({ title, currentScript, captions, topics, creators }) {
@@ -334,16 +514,7 @@ exports.callClaude = onCall(
     }
     const uid = request.auth.uid;
 
-    // ── 2. Server-side rate limit ────────────────────────────────────────────
-    const allowed = await checkRateLimit(uid);
-    if (!allowed) {
-      throw new HttpsError(
-        "resource-exhausted",
-        "Rate limit exceeded. You can generate up to 10 ideas per hour. Please try again later."
-      );
-    }
-
-    // ── 3. Validate and sanitise the payload ─────────────────────────────────
+    // ── 2. Validate and sanitise the payload ────────────────────────────────
     const {
       captions,
       topics,
@@ -353,16 +524,37 @@ exports.callClaude = onCall(
       aiAdvice,
       previousAdvice,
       uncoveredTopics,
+      postedIdeas,
+      sourceSignature,
       mode,
       title,
       currentScript,
     } = validatePayload(request.data);
 
-    // ── 4. Build the prompt ──────────────────────────────────────────────────
+    // ── 3. Server-side rate limit (per bucket) ───────────────────────────────
+    const bucket = bucketForMode(mode);
+    const allowed = await checkRateLimit(uid, bucket);
+    if (!allowed) {
+      const isIdea = bucket === "claudeApi";
+      throw new HttpsError(
+        "resource-exhausted",
+        isIdea
+          ? "Generation limit reached. You can generate up to 10 ideas per hour. Please try again later."
+          : "Advice limit reached. Please try again later."
+      );
+    }
+
+    // ── 4. Build the prompt ─────────────────────────────────────────────────
     let userMessage;
 
     if (mode === "assistScript") {
-      userMessage = promptAssistScript({ title, currentScript, captions, topics, creators });
+      userMessage = promptAssistScript({
+        title,
+        currentScript,
+        captions,
+        topics,
+        creators,
+      });
     } else if (mode === "getAIAdvice") {
       userMessage = promptGetAIAdvice({
         ideaSummaries: existingSummaries,
@@ -370,6 +562,16 @@ exports.callClaude = onCall(
         captions,
         previousAdvice,
         uncoveredTopics,
+      });
+    } else if (mode === "getTryNextInsight") {
+      if (topics.length === 0 || postedIdeas.length === 0) {
+        throw new HttpsError("invalid-argument", "Topics and posted ideas are required.");
+      }
+      userMessage = promptGetTryNextInsight({
+        postedIdeas,
+        topics,
+        captions,
+        sourceSignature,
       });
     } else {
       const parts = buildSignalsParts({ captions, topics, creators, extraDirection });
@@ -383,7 +585,11 @@ exports.callClaude = onCall(
             existingSummaries.map((s) => `- ${s}`).join("\n")
           : "";
 
-      userMessage = promptGenerateIdea(parts, avoidSection, aiAdvice);
+      userMessage = promptGenerateIdea(
+        parts,
+        avoidSection,
+        aiAdvice,
+      );
     }
 
     // Hard cap on assembled prompt length — prevents unbounded API spend.
@@ -394,15 +600,31 @@ exports.callClaude = onCall(
     // ── 5. Call Anthropic (key from Secret Manager) ───────────────────────────
     const client = new Anthropic.default({ apiKey: anthropicApiKey.value() });
 
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: userMessage }],
-    });
+    let response;
+    try {
+      response = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: userMessage }],
+      });
+    } catch (e) {
+      // Anthropic 429 → surface as resource-exhausted so client shows the
+      // correct rate-limit message instead of a generic connection error.
+      if (e?.status === 429) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "AI service rate limit reached. Please try again later."
+        );
+      }
+      throw new HttpsError(
+        "internal",
+        "Failed to reach AI service. Please try again."
+      );
+    }
 
     const text = response.content[0].text;
 
-    // For assistScript and getAIAdvice modes return raw text; for idea modes return parsed JSON.
+    // For assistScript and getAIAdvice modes return raw text; for JSON modes parse below.
     if (mode === "assistScript" || mode === "getAIAdvice") {
       return { text };
     }
@@ -411,6 +633,13 @@ exports.callClaude = onCall(
     const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
     try {
       const parsed = JSON.parse(cleaned);
+      if (mode === "getTryNextInsight") {
+        return normalizeTryNextResponse(parsed, {
+          topics,
+          postedIdeas,
+          sourceSignature,
+        });
+      }
       return { title: String(parsed.title), script: String(parsed.script) };
     } catch {
       throw new HttpsError("internal", "Failed to parse AI response.");
