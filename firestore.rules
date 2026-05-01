@@ -1,0 +1,173 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function userDocKeys() {
+      return [
+        'email',
+        'createdAt',
+        'tutorialSeen',
+        'signals',
+        'aiAdvice',
+        'tryNextInsight',
+        'rateLimits',
+      ];
+    }
+
+    function ideaKeys() {
+      return [
+        'title',
+        'script',
+        'status',
+        'tags',
+        'isAIGenerated',
+        'archived',
+        'createdAt',
+        'updatedAt',
+      ];
+    }
+
+    function hasOptionalString(data, key, maxLength) {
+      return !data.keys().hasAny([key]) ||
+        (data[key] is string && data[key].size() <= maxLength);
+    }
+
+    function hasOptionalBool(data, key) {
+      return !data.keys().hasAny([key]) || data[key] is bool;
+    }
+
+    function hasOptionalTimestamp(data, key) {
+      return !data.keys().hasAny([key]) || data[key] is timestamp;
+    }
+
+    function hasOptionalList(data, key, maxItems) {
+      return !data.keys().hasAny([key]) ||
+        (data[key] is list && data[key].size() <= maxItems);
+    }
+
+    function validSignals(signals) {
+      return signals is map &&
+        signals.keys().hasOnly([
+          'captions',
+          'topics',
+          'creators',
+          'videos',
+          'updatedAt',
+        ]) &&
+        hasOptionalList(signals, 'captions', 20) &&
+        hasOptionalList(signals, 'topics', 20) &&
+        hasOptionalList(signals, 'creators', 15) &&
+        hasOptionalList(signals, 'videos', 10) &&
+        hasOptionalTimestamp(signals, 'updatedAt');
+    }
+
+    function validTryNextInsight(insight) {
+      return insight is map &&
+        insight.keys().hasOnly([
+          'pattern',
+          'anchorTopic',
+          'topicCounts',
+          'inferredTags',
+          'hooks',
+          'sourceSignature',
+          'updatedAt',
+        ]) &&
+        hasOptionalString(insight, 'pattern', 1200) &&
+        hasOptionalString(insight, 'anchorTopic', 60) &&
+        (!insight.keys().hasAny(['topicCounts']) ||
+          insight.topicCounts is map) &&
+        hasOptionalList(insight, 'inferredTags', 25) &&
+        hasOptionalList(insight, 'hooks', 8) &&
+        hasOptionalString(insight, 'sourceSignature', 1000) &&
+        hasOptionalTimestamp(insight, 'updatedAt');
+    }
+
+    function validUserDoc(data) {
+      return data.keys().hasOnly(userDocKeys()) &&
+        hasOptionalString(data, 'email', 254) &&
+        hasOptionalTimestamp(data, 'createdAt') &&
+        hasOptionalBool(data, 'tutorialSeen') &&
+        (!data.keys().hasAny(['signals']) || validSignals(data.signals)) &&
+        hasOptionalString(data, 'aiAdvice', 3000) &&
+        (!data.keys().hasAny(['tryNextInsight']) ||
+          validTryNextInsight(data.tryNextInsight)) &&
+        (!data.keys().hasAny(['rateLimits']) || data.rateLimits is map);
+    }
+
+    function validUserCreate() {
+      return !request.resource.data.keys().hasAny(['rateLimits']) &&
+        validUserDoc(request.resource.data);
+    }
+
+    function validUserUpdate() {
+      return validUserDoc(request.resource.data) &&
+        !request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasAny(['rateLimits']);
+    }
+
+    function hasOptionalStatus(data) {
+      return !data.keys().hasAny(['status']) ||
+        data.status in ['Draft', 'Script Ready', 'Posted'];
+    }
+
+    function validIdeaFields(data) {
+      return data.keys().hasOnly(ideaKeys()) &&
+        (!data.keys().hasAny(['title']) ||
+          (data.title is string &&
+            data.title.size() > 0 &&
+            data.title.size() <= 200)) &&
+        hasOptionalString(data, 'script', 10000) &&
+        hasOptionalStatus(data) &&
+        hasOptionalList(data, 'tags', 30) &&
+        hasOptionalBool(data, 'isAIGenerated') &&
+        hasOptionalBool(data, 'archived') &&
+        hasOptionalTimestamp(data, 'createdAt') &&
+        hasOptionalTimestamp(data, 'updatedAt');
+    }
+
+    function validIdeaCreate(data) {
+      return data.keys().hasAll(ideaKeys()) && validIdeaFields(data);
+    }
+
+    function validSavedHook(data) {
+      return data.keys().hasOnly(['text', 'savedAt']) &&
+        data.keys().hasAll(['text', 'savedAt']) &&
+        data.text is string &&
+        data.text.size() > 0 &&
+        data.text.size() <= 2000 &&
+        data.savedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow read, delete: if isOwner(userId);
+      allow create: if isOwner(userId) && validUserCreate();
+      allow update: if isOwner(userId) && validUserUpdate();
+
+      match /ideas/{ideaId} {
+        allow read, delete: if isOwner(userId);
+        allow create: if isOwner(userId) && validIdeaCreate(request.resource.data);
+        allow update: if isOwner(userId) && validIdeaFields(request.resource.data);
+      }
+
+      match /savedAdvice/{hookId} {
+        allow read, delete: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+          validSavedHook(request.resource.data);
+        allow update: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

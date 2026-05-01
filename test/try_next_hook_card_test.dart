@@ -33,4 +33,36 @@ void main() {
     await tester.tap(find.byType(TryNextHookCard));
     expect(tapped, isTrue);
   });
+
+  testWidgets('TryNextHookCard save action does not trigger generation', (
+    tester,
+  ) async {
+    var generated = false;
+    var saved = false;
+    const hook = TryNextHook(
+      type: 'sameTopic',
+      label: 'Push fitness',
+      hook: 'The part of fitness nobody talks about',
+      targetTopic: 'Fitness',
+      reason: 'Keeps the topic fresh.',
+      generationDirection: 'Generate this idea.',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TryNextHookCard(
+            hook: hook,
+            onTap: () => generated = true,
+            onSave: () => saved = true,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Save'));
+
+    expect(saved, isTrue);
+    expect(generated, isFalse);
+  });
 }

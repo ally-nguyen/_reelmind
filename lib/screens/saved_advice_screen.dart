@@ -99,7 +99,7 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'SAVED INSIGHTS',
+                            'SAVED HOOKS',
                             style: GoogleFonts.manrope(
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
@@ -108,7 +108,7 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                             ),
                           ),
                           Text(
-                            'Your bookmarked creator insights',
+                            'Your bookmarked hook directions',
                             style: GoogleFonts.manrope(
                               fontSize: 14,
                               fontWeight: FontWeight.w700,
@@ -150,7 +150,7 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                                       ),
                                       const SizedBox(height: 12),
                                       Text(
-                                        'No saved insights yet',
+                                        'No saved hooks yet',
                                         style: GoogleFonts.manrope(
                                           fontSize: 15,
                                           fontWeight: FontWeight.w700,
@@ -159,7 +159,7 @@ class _SavedAdviceScreenState extends State<SavedAdviceScreen> {
                                       ),
                                       const SizedBox(height: 6),
                                       Text(
-                                        'Tap "Save insight" on the profile screen to bookmark guidance you want to keep.',
+                                        'Tap "Save" on a What to Try Next hook to keep a direction for later.',
                                         textAlign: TextAlign.center,
                                         style: GoogleFonts.manrope(
                                           fontSize: 13,

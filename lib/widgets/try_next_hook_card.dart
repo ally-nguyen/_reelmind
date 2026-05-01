@@ -7,8 +7,18 @@ import 'rm_chip.dart';
 class TryNextHookCard extends StatelessWidget {
   final TryNextHook hook;
   final VoidCallback onTap;
+  final VoidCallback? onSave;
+  final bool isSaved;
+  final bool isSaving;
 
-  const TryNextHookCard({super.key, required this.hook, required this.onTap});
+  const TryNextHookCard({
+    super.key,
+    required this.hook,
+    required this.onTap,
+    this.onSave,
+    this.isSaved = false,
+    this.isSaving = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -70,14 +80,52 @@ class TryNextHookCard extends StatelessWidget {
                 children: [
                   const Icon(Icons.auto_awesome, size: 14, color: kBrandDeep),
                   const SizedBox(width: 6),
-                  Text(
-                    'Generate this direction',
-                    style: GoogleFonts.manrope(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      color: kBrandDeep,
+                  Expanded(
+                    child: Text(
+                      'Generate this direction',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: kBrandDeep,
+                      ),
                     ),
                   ),
+                  if (onSave != null) ...[
+                    const SizedBox(width: 12),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: isSaved || isSaving ? null : onSave,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isSaving)
+                            const SizedBox(
+                              width: 13,
+                              height: 13,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.6,
+                                color: kBrand,
+                              ),
+                            )
+                          else
+                            Icon(
+                              isSaved ? Icons.bookmark : Icons.bookmark_outline,
+                              size: 15,
+                              color: isSaved ? kBrand : kMuted,
+                            ),
+                          const SizedBox(width: 4),
+                          Text(
+                            isSaved ? 'Saved' : 'Save',
+                            style: GoogleFonts.manrope(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: isSaved ? kBrand : kMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],

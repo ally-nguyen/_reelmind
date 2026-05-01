@@ -35,6 +35,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Map<String, dynamic>? _signals;
   int _archivedCount = 0;
   int _savedAdviceCount = 0;
+  final Set<String> _savedHookKeys = {};
+  final Set<String> _savingHookKeys = {};
 
   StreamSubscription<List<IdeaModel>>? _ideasSub;
   StreamSubscription<List<IdeaModel>>? _archivedSub;
@@ -274,6 +276,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
     );
+  }
+
+  String _hookSaveText(TryNextHook hook) {
+    final bridge = hook.bridgeTopic == null
+        ? ''
+        : '\nConnected topic: ${hook.bridgeTopic}';
+    return 'Hook: "${hook.hook}"\n'
+        'Topic: ${hook.targetTopic}$bridge\n'
+        'Why: ${hook.reason}\n'
+        'Direction: ${hook.generationDirection}';
+  }
+
+  Future<void> _saveHook(TryNextHook hook) async {
+    final uid = _uid;
+    if (uid == null) return;
+    final text = _hookSaveText(hook);
+    if (_savedHookKeys.contains(text) || _savingHookKeys.contains(text)) return;
+
+    setState(() => _savingHookKeys.add(text));
+    try {
+      await FirestoreService.addSavedAdvice(uid, text);
+      if (!mounted) return;
+      setState(() {
+        _savedHookKeys.add(text);
+        _savedAdviceCount = _savedAdviceCount + 1;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Hook saved!',
+            style: GoogleFonts.manrope(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          backgroundColor: kNavy,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _savingHookKeys.remove(text));
+    }
   }
 
   void _startTutorial() {
@@ -554,7 +601,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'SAVED ADVICE',
+                        'SAVED HOOKS',
                         style: GoogleFonts.manrope(
                           fontSize: 10,
                           fontWeight: FontWeight.w800,
@@ -564,7 +611,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '$_savedAdviceCount ${_savedAdviceCount == 1 ? 'piece' : 'pieces'} saved',
+                        '$_savedAdviceCount ${_savedAdviceCount == 1 ? 'hook' : 'hooks'} saved',
                         style: GoogleFonts.manrope(
                           fontSize: 14,
                           fontWeight: FontWeight.w800,
@@ -852,6 +899,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               TryNextHookCard(
                 hook: entry.value,
                 onTap: () => _openHook(entry.value),
+                onSave: () => _saveHook(entry.value),
+                isSaved: _savedHookKeys.contains(_hookSaveText(entry.value)),
+                isSaving: _savingHookKeys.contains(_hookSaveText(entry.value)),
               ),
             ],
           );
