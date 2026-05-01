@@ -1,83 +1,16 @@
 # Reel Mind
 
-Reel Mind is a Flutter mobile app for short-form video creators who want help turning inspiration into usable content ideas. Users can save captions, topics, creator influences, and reference videos, then generate new video ideas and script bullets with Claude through a secure Firebase backend.
+## What the Project Does
 
-This project was built as a CS 4750 school project and currently targets Android and iOS with Firebase-backed authentication, storage, and idea management.
+The app helps make content planning faster, more personalized, and more genuine by giving users AI-generated ideas they can build on, AI-assisted script support for developing talking points, and a workspace for organizing ideas through draft, script-ready, posted, and archived states. It also includes What to Try Next, which analyzes posted scripts to suggest new hook directions, and Saved Hooks, where users can store future content directions for later.
 
-## Features
+## Why the Project Is Useful
 
-- Email/password authentication with Firebase Auth
-- Creator signal import flow for captions, topics, creators, and reference videos
-- AI-generated video ideas based on saved creator signals
-- Script workspace with autosave, tags, production statuses, and AI assist
-- Firestore-backed idea pipeline with draft, script-ready, posted, and archived states
-- Onboarding/tutorial overlays across key screens
-- Profile and settings screens for managing creator workflow and account data
+The problem Reel Mind aims to solve is reducing the amount of time social media creators spend on pre-production planning, especially when coming up with new short-form content ideas. Many creators experience burnout or creative roadblocks when trying to think of video ideas that still fit their personal content style. When creators run out of ideas, it becomes harder to consistently produce and publish content, which can lead to lower viewership, fewer promotional opportunities, and slower audience growth.
 
-## Tech Stack
+Reel Mind uses AI to help creators generate personalized video ideas and talking points based on their content style. Instead of spending excessive time brainstorming from scratch, users can rely on the app to support the idea-generation process while they focus more on filming and producing content. The goal is to make content planning faster, more personalized, and more genuine while helping creators stay consistent without feeling creatively drained.
 
-- Flutter and Dart
-- Firebase Auth
-- Cloud Firestore
-- Firebase Storage
-- Firebase Cloud Functions
-- Anthropic Claude via a Firebase Function proxy
-
-## Architecture
-
-The mobile app does not call Anthropic directly. Claude requests are sent from Flutter to the callable Firebase Function `callClaude`, which then calls Anthropic using a server-side secret stored in Firebase Secret Manager.
-
-This keeps the Anthropic API key out of the client app and allows the backend to enforce:
-
-- authenticated access
-- server-side rate limiting
-- input validation and sanitization
-- centralized prompt logic
-
-## Project Structure
-
-```text
-lib/
-  models/          Data models such as ideas
-  screens/         Main app screens and flows
-  services/        Firebase, Claude, preferences, and rate limiting
-  utils/           Input validation and shared helpers
-  widgets/         Reusable UI components
-
-functions/
-  index.js         Firebase callable function for Claude generation
-
-assets/
-  branding/        Logos and visual assets
-```
-
-## Prerequisites
-
-- Flutter 3.35+
-- Dart 3.9+
-- Xcode for iOS builds
-- Android Studio / Android SDK for Android builds
-- Firebase project configured for:
-  - Auth
-  - Firestore
-  - Storage
-  - Cloud Functions
-
-For Claude generation to work, the Firebase Function must also be deployed and the Anthropic secret must be set in Firebase Secret Manager.
-
-Set the function secret:
-
-```bash
-firebase functions:secrets:set ANTHROPIC_API_KEY
-```
-
-Deploy functions:
-
-```bash
-firebase deploy --only functions
-```
-
-## Getting Started
+## How Users Can Get Started
 
 Install dependencies:
 
@@ -98,30 +31,20 @@ flutter analyze
 flutter test
 ```
 
-## Android Release Build
+For AI features to work, the Firebase project must have Authentication, Cloud Firestore, Firebase Storage, Cloud Functions, and the `ANTHROPIC_API_KEY` secret configured. The callable Firebase Function `callClaude` must also be deployed.
 
-Release signing is configured through:
+## Where Users Can Get Help
 
-- [key.properties](/Users/allynguyen/Documents/SchoolWork/4750/reel_mind_folder/reel_mind/android/key.properties)
-- a local keystore file referenced by `storeFile`
+Users can review the project files in this repository, especially:
 
-Build a Play Store bundle:
+- [`lib/`](lib/) for the Flutter app code
+- [`functions/index.js`](functions/index.js) for the Firebase Claude proxy
+- [`firestore.rules`](firestore.rules) for Cloud Firestore access rules
 
-```bash
-flutter build appbundle
-```
+For Firebase-specific setup, use the Firebase Console and Firebase documentation for Authentication, Firestore, Storage, Cloud Functions, and Secret Manager.
 
-Expected output:
+## Maintainers and Contributors
 
-[app-release.aab](/Users/allynguyen/Documents/SchoolWork/4750/reel_mind_folder/reel_mind/build/app/outputs/bundle/release/app-release.aab)
+Current contributors:
 
-## Current Version
-
-The app version is currently set to `1.0.1+3` in [pubspec.yaml](/Users/allynguyen/Documents/SchoolWork/4750/reel_mind_folder/reel_mind/pubspec.yaml).
-
-## Security Notes
-
-- The Anthropic API key is not stored in Flutter assets or client code.
-- Claude requests are proxied through Firebase Cloud Functions.
-- User inputs are validated and sanitized before storage and generation.
-- Local and server-side rate limiting are both used for sensitive actions.
+- Allison Nguyen
